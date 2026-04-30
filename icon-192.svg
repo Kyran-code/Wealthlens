@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="40" fill="#0d111e"/>
+  <rect x="12" y="12" width="168" height="168" rx="28" fill="#131927"/>
+  <rect x="12" y="12" width="168" height="4" rx="2" fill="#00e5a0"/>
+  <text x="96" y="118" font-family="Arial Black,Arial" font-weight="900" font-size="76" fill="#00e5a0" text-anchor="middle">W</text>
+  <text x="96" y="148" font-family="Arial" font-weight="400" font-size="18" fill="#6b7a99" text-anchor="middle">WealthLens</text>
+</svg>
