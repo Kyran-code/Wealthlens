@@ -2489,7 +2489,7 @@
     // FETCH
     // ═══════════════════════════════════════════════════════════
     async function yfGet(ticker, range = '2d', interval = '1d') {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}&includePrePost=false`;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}&includePrePost=false&_t=${Date.now()}`;
       for (let i = 0; i < PROXIES.length; i++) {
         try { const r = await fetch(PROXIES[(pI + i) % PROXIES.length](url), { signal: AbortSignal.timeout(9000) }); if (!r.ok) continue; const d = await r.json(); if (d?.chart?.result?.[0]) { pI = (pI + i) % PROXIES.length; return d.chart.result[0]; } } catch { }
       } return null;
@@ -2629,20 +2629,54 @@
       const h = Math.round((Date.now() / 1000 - ts) / 3600);
       return h < 1 ? 'Just now' : h < 24 ? h + 'h ago' : Math.round(h / 24) + 'd ago';
     }
+    // Batch quote fetch — one request for ALL symbols, cache-busted each call
+    async function fetchBatchQuotes(symbols) {
+      if (!symbols.length) return [];
+      const fields = 'regularMarketPrice,regularMarketPreviousClose,regularMarketChange,regularMarketChangePercent,fiftyTwoWeekHigh,fiftyTwoWeekLow,longName,shortName';
+      const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbols.join(',')}&fields=${fields}&_t=${Date.now()}`;
+      for (let i = 0; i < PROXIES.length; i++) {
+        try {
+          const r = await fetch(PROXIES[(pI + i) % PROXIES.length](url), { signal: AbortSignal.timeout(12000) });
+          if (!r.ok) continue;
+          const d = await r.json();
+          const res = d?.quoteResponse?.result;
+          if (res?.length) { pI = (pI + i) % PROXIES.length; return res; }
+        } catch { }
+      }
+      return [];
+    }
     async function fetchAllQ() {
-      // Apply stored manual NAV for SG funds (so LD has a price entry for portfolio totals)
+      // SG Funds use manually stored NAV
       S.holdings.filter(h => h.exchange === 'SG_FUND' && h.manualPrice).forEach(h => {
-        if (!LD[h.ticker]) LD[h.ticker] = { price: h.manualPrice / USD, prev: h.manualPrice / USD, hi52: null, lo52: null, name: h.name };
+        LD[h.ticker] = { price: h.manualPrice / USD, prev: h.manualPrice / USD, hi52: null, lo52: null, name: h.name };
       });
-      const tickers = [...new Set(S.holdings.filter(h => h.exchange !== 'SG_FUND').map(h => ({ tk: h.ticker, sym: yfSymbol(h) })))];
-      const res = await Promise.allSettled(tickers.map(({ tk, sym }) => fetchQ(sym).then(q => [tk, q])));
-      res.forEach(r => { if (r.status === 'fulfilled' && r.value[1]) LD[r.value[0]] = r.value[1]; });
+      const held = S.holdings.filter(h => h.exchange !== 'SG_FUND');
+      if (!held.length) return;
+      // Build unique symbol list and a reverse map: symbol → raw ticker key
+      const symMap = {};
+      held.forEach(h => { symMap[yfSymbol(h)] = h.ticker; });
+      const quotes = await fetchBatchQuotes(Object.keys(symMap));
+      quotes.forEach(q => {
+        const tk = symMap[q.symbol] || q.symbol;
+        LD[tk] = { price: q.regularMarketPrice, prev: q.regularMarketPreviousClose || q.regularMarketPrice, hi52: q.fiftyTwoWeekHigh, lo52: q.fiftyTwoWeekLow, name: q.longName || q.shortName || tk };
+      });
     }
     async function fetchMeta() {
-      const [fx, gq, sq] = await Promise.allSettled([fetchQ('USDSGD=X'), fetchQ('GC=F'), fetchQ('SI=F')]);
-      if (fx.status === 'fulfilled' && fx.value?.price) USD = fx.value.price;
-      if (gq.status === 'fulfilled' && gq.value?.price) { goldSpot = gq.value.price; goldDayChg = gq.value.price - gq.value.prev; }
-      if (sq.status === 'fulfilled' && sq.value?.price) { silverSpot = sq.value.price; silverDayChg = sq.value.prev ? sq.value.price - sq.value.prev : null; }
+      // Fetch FX + commodities as a single batch request
+      const metaSymbols = ['USDSGD=X', 'GC=F', 'SI=F'];
+      const quotes = await fetchBatchQuotes(metaSymbols);
+      quotes.forEach(q => {
+        if (q.symbol === 'USDSGD=X' && q.regularMarketPrice) USD = q.regularMarketPrice;
+        if (q.symbol === 'GC=F' && q.regularMarketPrice) { goldSpot = q.regularMarketPrice; goldDayChg = q.regularMarketChange || 0; }
+        if (q.symbol === 'SI=F' && q.regularMarketPrice) { silverSpot = q.regularMarketPrice; silverDayChg = q.regularMarketChange || 0; }
+      });
+      // Fallback to individual fetch if batch returned nothing
+      if (!quotes.length) {
+        const [fx, gq, sq] = await Promise.allSettled([fetchQ('USDSGD=X'), fetchQ('GC=F'), fetchQ('SI=F')]);
+        if (fx.status === 'fulfilled' && fx.value?.price) USD = fx.value.price;
+        if (gq.status === 'fulfilled' && gq.value?.price) { goldSpot = gq.value.price; goldDayChg = gq.value.price - gq.value.prev; }
+        if (sq.status === 'fulfilled' && sq.value?.price) { silverSpot = sq.value.price; silverDayChg = sq.value.prev ? sq.value.price - sq.value.prev : null; }
+      }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2668,22 +2702,28 @@
       }
     }
     init();
-    // Adaptive poll: 15s during market hours, 60s when closed
-    let _pollTimer = null;
+    // Live price poll: 15s during market hours, 60s when closed
+    // Only refreshes live prices + portfolio values — not the NW chart
+    let _pollTimer = null, _wasMarketOpen = false;
     function schedulePoll() {
       if (_pollTimer) clearTimeout(_pollTimer);
       const open = isMarketOpen();
       _pollTimer = setTimeout(async () => {
-        await fetchMeta(); await fetchAllQ();
-        // Record intraday NW point for live chart
-        const { nw } = computeLiveNW();
-        if (nw > 500) {
-          const t = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: false });
-          intradayNW.push({ t, v: nw });
-          if (intradayNW.length > 600) intradayNW = intradayNW.slice(-600);
+        await fetchMeta();
+        await fetchAllQ();
+        // Detect market close → save end-of-day NW snapshot
+        const nowOpen = isMarketOpen();
+        if (_wasMarketOpen && !nowOpen) {
+          const { nw, stocksSGD, metalsSGD } = computeLiveNW();
+          if (nw > 500) { saveNwSnap(nw, true, stocksSGD, metalsSGD); renderNwChart(); }
         }
-        renderDash(); renderHoldings();
-        document.getElementById('upd-time').textContent = 'Updated ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }) + (isMarketOpen() ? ' · live' : '');
+        _wasMarketOpen = nowOpen;
+        // Re-render only the price-sensitive parts
+        renderHoldings();
+        renderKpi();
+        renderMovers();
+        const timeStr = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('upd-time').textContent = 'Updated ' + timeStr + (nowOpen ? ' · live' : '');
         schedulePoll();
       }, open ? 15000 : 60000);
     }
@@ -2821,28 +2861,16 @@
     function renderNwChart() {
       const { nw: liveNW } = computeLiveNW();
       const todayStr = td();
-      // Use intraday data for 7D view when we have enough points recorded this session
-      const useIntraday = NWR === 7 && intradayNW.length >= 2;
+      // Daily view: historical snapshots + live NW as today's value
+      const sl = getSlice(NWR).filter(p => p.date !== todayStr);
+      if (liveNW > 500) sl.push({ date: todayStr, v: liveNW });
+      sl.sort((a, b) => a.date.localeCompare(b.date));
+      const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
       let labels, vals;
-      if (useIntraday) {
-        // Show last daily snapshot (yesterday) as anchor, then today's intraday curve
-        const prevSnaps = S.nwHist.filter(p => p.date < todayStr).slice(-3);
-        const snapLabels = prevSnaps.map(p => { const dt = new Date(p.date + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); });
-        const snapVals = prevSnaps.map(p => p.v);
-        labels = [...snapLabels, ...intradayNW.map(p => p.t)];
-        vals = [...snapVals, ...intradayNW.map(p => p.v)];
-      } else {
-        // Daily view — always replace/append today's live value as last point
-        const sl = getSlice(NWR).filter(p => p.date !== todayStr);
-        if (liveNW > 500) sl.push({ date: todayStr, v: liveNW });
-        sl.sort((a, b) => a.date.localeCompare(b.date));
-        const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
-        if (!sl.length) { labels = ['Now']; vals = [liveNW || 0]; }
-        else if (sl.length === 1) { labels = [fL(sl[0].date), 'Now']; vals = [sl[0].v, sl[0].v]; }
-        else { labels = sl.map(p => fL(p.date)); vals = sl.map(p => p.v); }
-      }
+      if (!sl.length) { labels = ['Now']; vals = [liveNW || 0]; }
+      else if (sl.length === 1) { labels = [fL(sl[0].date)]; vals = [sl[0].v]; }
+      else { labels = sl.map(p => fL(p.date)); vals = sl.map(p => p.v); }
       const latest = vals[vals.length - 1] || 0, first = vals[0] || 0, diff = latest - first, diffP = first ? diff / first * 100 : 0, pos = diff >= 0;
-      // Hero always shows the live computed value, not chart's snapshot
       if (liveNW > 500) document.getElementById('nw-val').textContent = 'SGD ' + liveNW.toLocaleString();
       const rl = { 7: '7D', 30: '1M', 90: '3M', 180: '6M', 365: '1Y', 9999: 'All' }[NWR] || '';
       const rc = document.getElementById('nw-rc'); rc.textContent = (pos ? '+' : '−') + 'SGD ' + Math.abs(Math.round(diff)).toLocaleString() + ' (' + (pos ? '+' : '') + diffP.toFixed(2) + '%) ' + rl; rc.style.color = pos ? 'var(--gr)' : 'var(--rd)';
@@ -2853,7 +2881,7 @@
       const lc = pos ? '#00e5a0' : '#ff4545', fc = pos ? 'rgba(0,229,160,0.07)' : 'rgba(255,69,69,0.07)';
       const ctx = document.getElementById('nw-c').getContext('2d');
       if (C.nw) C.nw.destroy();
-      C.nw = new Chart(ctx, { type: 'line', data: { labels, datasets: [{ data: vals, borderColor: lc, backgroundColor: fc, tension: useIntraday ? 0.2 : 0.35, pointRadius: vals.length <= 30 ? 2 : 0, pointBackgroundColor: lc, fill: true, borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 10 }, maxTicksLimit: useIntraday ? 6 : 8 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 10 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
+      C.nw = new Chart(ctx, { type: 'line', data: { labels, datasets: [{ data: vals, borderColor: lc, backgroundColor: fc, tension: 0.35, pointRadius: vals.length <= 14 ? 3 : 1, pointBackgroundColor: lc, fill: true, borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 10 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
     }
 
     function _buildCompChart(canvasId, chartKey, valElId, chgElId, liveVal, histField, color, colorBg, labelPrefix) {
@@ -3691,7 +3719,7 @@
           }
         });
       }
-      const [gHist, sHist] = await Promise.all([fetchHist('GC=F', '1y'), fetchHist('SI=F', '1y')]);
+      const [gHist, sHist] = await Promise.all([fetchHist('GC=F', '6mo'), fetchHist('SI=F', '6mo')]);
       buildSpotChart('c-gold-spot', 'goldSpotChart', gHist, '#ffb740', 'rgba(255,183,64,0.07)');
       buildSpotChart('c-silver-spot', 'silverSpotChart', sHist, '#c0c0c0', 'rgba(192,192,192,0.07)');
     }
