@@ -13,6 +13,10 @@
 <title>WealthLens</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <style>
 /* ═══════════════════════════════════════
    VARIABLES & RESET
@@ -301,7 +305,6 @@ tr:hover .del-btn{opacity:.7;}
     <div class="nav-lbl">Overview</div>
     <div class="nav-item on" onclick="go('dash',this)"><span class="nav-icon">◈</span> Dashboard</div>
     <div class="nav-item" onclick="go('analytics',this)"><span class="nav-icon">◎</span> Analytics</div>
-    <div class="nav-item" onclick="go('checklist',this)"><span class="nav-icon">✓</span> Investment Checklist</div>
   </div>
   <div class="nav-sec">
     <div class="nav-lbl">Portfolio</div>
@@ -326,7 +329,8 @@ tr:hover .del-btn{opacity:.7;}
     <div class="tb-time"><b id="tn">--:--</b>&nbsp;&nbsp;<span id="dn">—</span></div>
     <div class="tb-right">
       <div class="live-badge"><div class="live-dot"></div><span id="upd-time">Loading...</span></div>
-      <button class="refresh-btn" onclick="hardRefresh()">↺ Refresh</button>
+      <button class="refresh-btn" id="refresh-btn" onclick="hardRefresh()">↺ Refresh</button>
+      <div id="auth-btn"></div>
     </div>
   </div>
   <div id="content">
@@ -400,21 +404,6 @@ tr:hover .del-btn{opacity:.7;}
     </div>
   </div>
 
-  <!-- ██ INVESTMENT CHECKLIST ██ -->
-  <div id="page-checklist" class="page">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem;">
-      <div>
-        <div style="font-family:var(--sans);font-size:1rem;font-weight:700;">Long-term Investment Checklist</div>
-        <div style="font-size:10px;color:var(--mu);margin-top:2px;">Use this before making any long-term investment decision</div>
-      </div>
-      <div style="display:flex;gap:.5rem;">
-        <button class="btn btn-ghost" onclick="resetChecklist()">Reset all</button>
-        <div id="chk-progress" style="font-family:var(--sans);font-weight:700;font-size:1rem;color:var(--gr);padding:7px 17px;"></div>
-      </div>
-    </div>
-    <div id="checklist-body"></div>
-  </div>
-
   <!-- ██ HOLDINGS ██ -->
   <div id="page-holdings" class="page">
     <div class="sec">
@@ -429,6 +418,7 @@ tr:hover .del-btn{opacity:.7;}
           <div class="fg"><label>Account</label><select id="f-acct"><option>Moomoo</option><option>IBKR</option></select></div>
         </div>
         <button class="btn btn-gr" onclick="addHolding()">Add / update</button>
+        <button class="refresh-btn" onclick="openBrokerModal()" style="margin-left:10px;border-color:rgba(64,144,255,.4);color:#4090ff;background:rgba(64,144,255,.08);">⇪ Import from IBKR / Moomoo</button>
         <span class="anote" style="display:inline;margin-left:10px;">Same ticker from different accounts are merged. Click any row for full analysis.</span>
       </div>
     </div>
@@ -440,10 +430,9 @@ tr:hover .del-btn{opacity:.7;}
             <th>Chart</th><th>Ticker</th><th class="ra">Total Qty</th><th class="ra">Avg Cost</th>
             <th class="ra">Total Cost</th><th class="ra">Live Price</th><th class="ra">Mkt Value</th>
             <th class="ra">Gain/Loss</th><th class="ra">% Gain</th><th class="ra">Day %</th>
-            <th class="ra">Mkt Cap</th><th class="ra">P/E</th><th class="ra">EPS</th>
-            <th>52W Range</th><th>Rating</th><th></th>
+            <th>52W Range</th><th></th>
           </tr></thead>
-          <tbody id="h-body"><tr><td colspan="16" style="padding:2rem;text-align:center;" class="ld-txt">Fetching live data</td></tr></tbody>
+          <tbody id="h-body"><tr><td colspan="12" style="padding:2rem;text-align:center;" class="ld-txt">Fetching live data</td></tr></tbody>
         </table>
       </div>
       <div id="tbl-note" class="anote"></div>
@@ -670,6 +659,29 @@ tr:hover .del-btn{opacity:.7;}
     <button onclick="installPWA()" style="background:var(--gr);color:#000;border:none;font-family:var(--mono);font-size:11px;font-weight:700;padding:6px 16px;border-radius:6px;cursor:pointer;" id="install-btn">Install</button>
   </div>
 </div>
+
+<!-- ██ BROKER IMPORT MODAL ██ -->
+<div id="broker-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;" onclick="if(event.target===this)closeBrokerModal()">
+  <div style="background:var(--s1);border:1px solid var(--b2);border-radius:16px;width:min(620px,94vw);max-height:88vh;overflow-y:auto;padding:1.5rem;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem;">
+      <div style="font-family:var(--sans);font-weight:700;font-size:14px;">Import Portfolio Holdings</div>
+      <button onclick="closeBrokerModal()" style="background:none;border:none;color:var(--mu);font-size:20px;cursor:pointer;line-height:1;">✕</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:1rem;">
+      <button id="bm-tab-ibkr" class="btn btn-gr" onclick="setBrokerTab('ibkr')" style="font-size:11px;padding:5px 16px;">IBKR</button>
+      <button id="bm-tab-moomoo" class="refresh-btn" onclick="setBrokerTab('moomoo')" style="font-size:11px;padding:5px 16px;">Moomoo</button>
+    </div>
+    <div id="bm-instructions" style="font-size:11px;color:var(--mu);margin-bottom:.85rem;line-height:1.7;padding:.65rem .85rem;background:var(--b1);border-radius:8px;"></div>
+    <div class="upload-zone" id="broker-upload-zone" onclick="document.getElementById('broker-file-input').click()" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleBrokerDrop(event)">
+      <input type="file" id="broker-file-input" accept=".csv,.xlsx,.xls" onchange="handleBrokerFile(event)" style="display:none;">
+      <div style="font-size:1.4rem;margin-bottom:.4rem;">📂</div>
+      <div style="font-family:var(--sans);font-weight:700;font-size:12px;margin-bottom:.25rem;">Drop export file or click to browse</div>
+      <div style="font-size:10px;color:var(--mu);">CSV and Excel (.xlsx) supported</div>
+    </div>
+    <div id="broker-preview" style="margin-top:1rem;"></div>
+  </div>
+</div>
+
 <!-- iOS MODAL -->
 <div id="ios-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.82);backdrop-filter:blur(6px);align-items:flex-end;justify-content:center;">
   <div style="background:var(--s2);border:1px solid var(--b2);border-radius:20px 20px 0 0;padding:1.75rem;width:100%;max-width:460px;">
@@ -684,6 +696,33 @@ tr:hover .del-btn{opacity:.7;}
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════
+// FIREBASE CONFIG — paste your config object to enable sync
+// Get it: console.firebase.google.com → your project →
+//   Project Settings → Your apps → Web app → Config
+// ═══════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBZHYKK9nZAFrYnghdYJ0ztJWNFsz4d0Tg",
+  authDomain: "wealthlens2.firebaseapp.com",
+  projectId: "wealthlens2",
+  storageBucket: "wealthlens2.firebasestorage.app",
+  messagingSenderId: "1049346188601",
+  appId: "1:1049346188601:web:c00c12ef7a53a8c86374e8",
+  measurementId: "G-5VCRGMRHEK"
+}
+// const FIREBASE_CONFIG = {
+//   apiKey: "...", authDomain: "...", projectId: "...",
+//   storageBucket: "...", messagingSenderId: "...", appId: "..."
+// };
+
+let db=null, currentUser=null;
+if(FIREBASE_CONFIG){
+  try{
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db=firebase.firestore();
+  }catch(e){console.warn('Firebase init failed:',e);}
+}
+
 // ═══════════════════════════════════════════════════════════
 // GLOBALS
 // ═══════════════════════════════════════════════════════════
@@ -702,6 +741,7 @@ const PROXIES=[
 let pI=0;
 
 // ─── DEFAULT STATE ───────────────────────────────────────────
+const STORE_KEY='wealthlens';
 let S=lS()||{
   holdings:[],
   cashBase:0,
@@ -714,8 +754,13 @@ let S=lS()||{
 // ═══════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════
-function lS(){try{return JSON.parse(localStorage.getItem('wl2'));}catch{return null;}}
-function saveS(){localStorage.setItem('wl1',JSON.stringify(S));}
+function lS(){try{return JSON.parse(localStorage.getItem(STORE_KEY))||JSON.parse(localStorage.getItem('wl1'))||null;}catch{return null;}}
+function saveS(){
+  localStorage.setItem(STORE_KEY,JSON.stringify(S));
+  if(db&&currentUser){
+    db.collection('users').doc(currentUser.uid).collection('data').doc('state').set(S).catch(()=>{});
+  }
+}
 function td(){return new Date().toISOString().split('T')[0];}
 function f(v,d=2){if(v==null||isNaN(v))return'—';return'$'+(+v).toFixed(d).replace(/\B(?=(\d{3})+(?!\d))/g,',');}
 function fS(v){return'SGD '+Math.round(v*USD).toLocaleString();}
@@ -931,16 +976,31 @@ async function init(){
   renderDash();renderHoldings();
   S.holdings.forEach(h=>fetchFund(h.ticker).then(()=>renderHoldings()));
   document.getElementById('upd-time').textContent='Updated '+new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
+  updateAuthUI();
+  if(db){
+    firebase.auth().onAuthStateChanged(async user=>{
+      currentUser=user;
+      updateAuthUI();
+      if(user){await loadFromFirestore(user.uid);}
+    });
+  }
 }
 init();
 setInterval(async()=>{await fetchMeta();await fetchAllQ();renderDash();renderHoldings();document.getElementById('upd-time').textContent='Updated '+new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});},60000);
+let _refreshBusy=false;
 async function hardRefresh(){
+  if(_refreshBusy)return;
+  _refreshBusy=true;
+  const btn=document.getElementById('refresh-btn');
+  if(btn){btn.disabled=true;btn.textContent='↻ ...';}
   document.getElementById('upd-time').textContent='Refreshing...';
   FD={};spxCache=null;sparkCache={};
   await fetchMeta();await fetchAllQ();
   S.holdings.forEach(h=>fetchFund(h.ticker).then(()=>renderHoldings()));
   renderDash();renderHoldings();renderGold();
   document.getElementById('upd-time').textContent='Updated '+new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit'});
+  if(btn){btn.disabled=false;btn.textContent='↺ Refresh';}
+  setTimeout(()=>{_refreshBusy=false;},3000);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1231,11 +1291,7 @@ async function renderHoldings(){
       <td class="ra"><div class="${pos?'g':'r'}">${gl!==null?(gl>=0?'+':'')+(gl>=0?fS(gl):'-'+fSr(Math.abs(gl*USD))):'—'}</div><div class="gl-bar"><div class="gl-f" style="width:${bw}%;background:${pos?'var(--gr)':'var(--rd)'}"></div></div></td>
       <td class="ra"><span style="font-family:var(--sans);font-size:.95rem;font-weight:800;" class="${glP!==null?(glP>=0?'g':'r'):''}">${glP!==null?pct(glP):'—'}</span></td>
       <td class="ra" style="font-weight:700;"><span class="${dpos?'g':'r'}">${dayP!==null?pct(dayP):'—'}</span></td>
-      <td class="ra" style="font-size:11px;">${fd&&!fd._fallback&&fd.mktCap?fMC(fd.mktCap):'—'}</td>
-      <td class="ra b">${fd&&!fd._fallback&&fd.pe?fd.pe.toFixed(1):'—'}<div style="font-size:9px;color:var(--mu)">${fd&&!fd._fallback&&fd.fpe?fd.fpe.toFixed(1)+'f':''}</div></td>
-      <td class="ra">${fd&&!fd._fallback&&fd.eps?f(fd.eps):'—'}</td>
       <td>${rngHtml}</td>
-      <td>${anHtml}</td>
       <td><button class="del-btn" onclick="event.stopPropagation();delTicker('${h.ticker}')">✕</button></td>
     </tr>`;
   }).join('');
@@ -1426,6 +1482,25 @@ function addTx(){
 function delTx(id){S.transactions=S.transactions.filter(t=>t.id!==id);saveS();renderCash();}
 
 // Money Manager Excel/CSV import
+const MM_CAT_MAP={
+  'food & beverage':'Food & drinks','food and beverage':'Food & drinks','dining':'Food & drinks','restaurant':'Food & drinks',
+  'transportation':'Transport','transport':'Transport','grab':'Transport','taxi':'Transport','mrt':'Transport','bus':'Transport',
+  'shopping':'Shopping','retail':'Shopping',
+  'entertainment':'Entertainment','leisure':'Entertainment',
+  'health':'Healthcare','healthcare':'Healthcare','medical':'Healthcare','pharmacy':'Healthcare',
+  'utilities':'Utilities','bills':'Utilities','telco':'Utilities',
+  'housing':'Utilities','rent':'Utilities',
+  'education':'Education','tuition':'Education',
+  'travel':'Travel','holiday':'Travel','hotel':'Travel','flight':'Travel',
+  'salary':'NS Pay','income':'NS Pay','allowance':'Allowance (parents)',
+  'investment':'Investment return','dividend':'Investment return',
+  'subscriptions':'Subscriptions',
+};
+function mmMapCat(raw){
+  const k=(raw||'').toLowerCase().trim();
+  for(const [kw,mapped] of Object.entries(MM_CAT_MAP)){if(k.includes(kw))return mapped;}
+  return raw||'Other';
+}
 function handleFileSelect(e){parseImportFile(e.target.files[0]);}
 function handleFileDrop(e){e.preventDefault();document.getElementById('upload-zone').classList.remove('drag');parseImportFile(e.dataTransfer.files[0]);}
 async function parseImportFile(file){
@@ -1433,44 +1508,88 @@ async function parseImportFile(file){
   const status=document.getElementById('import-status');
   status.textContent='Reading file...';
   try{
-    const text=await file.text();
-    const lines=text.split('\n').map(l=>l.trim()).filter(l=>l);
-    if(!lines.length){status.textContent='File appears empty.';return;}
-    // Auto-detect CSV structure — look for date, amount, category columns
-    const header=lines[0].toLowerCase().split(/[,;\t]/);
-    const dateIdx=header.findIndex(h=>h.includes('date')||h.includes('날짜'));
-    const amtIdx=header.findIndex(h=>h.includes('amount')||h.includes('amt')||h.includes('money'));
-    const catIdx=header.findIndex(h=>h.includes('categ')||h.includes('type'));
-    const descIdx=header.findIndex(h=>h.includes('desc')||h.includes('note')||h.includes('memo')||h.includes('detail'));
-    const incomeIdx=header.findIndex(h=>h.includes('income')||h.includes('in'));
-    const expIdx=header.findIndex(h=>h.includes('expense')||h.includes('out')||h.includes('spend'));
-    let imported=0;
-    for(let i=1;i<lines.length;i++){
-      const cols=lines[i].split(/[,;\t]/);
-      if(cols.length<2)continue;
-      let dateStr='',amt=0,cat='Other',desc='',type='expense';
-      // Try to parse date
-      if(dateIdx>=0)dateStr=cols[dateIdx]?.trim();
-      let parsedDate=td();
-      if(dateStr){try{const d=new Date(dateStr);if(!isNaN(d))parsedDate=d.toISOString().split('T')[0];}catch{}}
-      // Amount
-      if(incomeIdx>=0&&expIdx>=0){
-        const inc=parseFloat(cols[incomeIdx]?.replace(/[^0-9.-]/g,''))||0;
-        const exp=parseFloat(cols[expIdx]?.replace(/[^0-9.-]/g,''))||0;
-        if(inc>0){amt=inc;type='income';}else if(exp>0){amt=exp;type='expense';}else continue;
-      } else if(amtIdx>=0){
-        const raw=parseFloat(cols[amtIdx]?.replace(/[^0-9.-]/g,''));
-        if(isNaN(raw)||raw===0)continue;
-        amt=Math.abs(raw);type=raw<0?'expense':'income';
-      } else continue;
-      if(catIdx>=0)cat=cols[catIdx]?.trim()||'Other';
-      if(descIdx>=0)desc=cols[descIdx]?.trim()||cat;
-      S.transactions.push({id:S.nid++,type,cat,desc,amt,date:parsedDate});
-      imported++;
+    let rows=null; // array of objects (from XLSX) or null (use CSV path)
+    if(file.name.match(/\.xlsx?$/i)&&typeof XLSX!=='undefined'){
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:'array',cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+    }
+    // Deduplicate key: date+amount+desc to avoid double-import
+    const existingKeys=new Set(S.transactions.map(t=>`${t.date}|${t.amt}|${t.desc}`));
+    let imported=0,skipped=0;
+    if(rows){
+      // XLSX path — Money Manager structured format
+      for(const row of rows){
+        const keys=Object.keys(row);
+        const getCol=(...cands)=>{for(const c of cands){const k=keys.find(k=>k.toLowerCase().includes(c.toLowerCase()));if(k)return String(row[k]||'').trim();}return '';};
+        let dateStr=getCol('date','날짜');
+        let parsedDate=td();
+        if(dateStr){
+          // Handle Excel serial dates (numbers) or date objects
+          const d=row[keys.find(k=>k.toLowerCase().includes('date'))||''];
+          if(d instanceof Date&&!isNaN(d))parsedDate=d.toISOString().split('T')[0];
+          else{try{const pd=new Date(dateStr);if(!isNaN(pd))parsedDate=pd.toISOString().split('T')[0];}catch{}}
+        }
+        const rawType=getCol('type','income/expense','in/out').toLowerCase();
+        const rawCat=getCol('category','categ');
+        const rawAmt=getCol('amount','amt','money').replace(/[^0-9.-]/g,'');
+        const rawDesc=getCol('note','desc','memo','detail','sub-category','subcategory')||rawCat;
+        const amt=parseFloat(rawAmt);
+        if(isNaN(amt)||amt===0)continue;
+        const type=rawType.includes('income')||rawType.includes('in')||(amt>0&&!rawType.includes('expense'))?'income':'expense';
+        const cat=mmMapCat(rawCat);
+        const key=`${parsedDate}|${Math.abs(amt)}|${rawDesc}`;
+        if(existingKeys.has(key)){skipped++;continue;}
+        existingKeys.add(key);
+        S.transactions.push({id:S.nid++,type,cat,desc:rawDesc||cat,amt:Math.abs(amt),date:parsedDate});
+        imported++;
+      }
+    }else{
+      // CSV path — generic auto-detect
+      const text=await file.text();
+      const lines=text.split('\n').map(l=>l.trim()).filter(l=>l);
+      if(!lines.length){status.textContent='File appears empty.';return;}
+      const header=lines[0].toLowerCase().split(/[,;\t]/);
+      const dateIdx=header.findIndex(h=>h.includes('date')||h.includes('날짜'));
+      const amtIdx=header.findIndex(h=>h.includes('amount')||h.includes('amt')||h.includes('money'));
+      const catIdx=header.findIndex(h=>h.includes('categ'));
+      const typeIdx=header.findIndex(h=>h==='type'||h.includes('income/expense')||h.includes('in/out'));
+      const descIdx=header.findIndex(h=>h.includes('desc')||h.includes('note')||h.includes('memo')||h.includes('detail')||h.includes('sub'));
+      const incomeIdx=header.findIndex(h=>h==='income'||h==='income amount');
+      const expIdx=header.findIndex(h=>h==='expense'||h==='expense amount'||h.includes('spend'));
+      for(let i=1;i<lines.length;i++){
+        const cols=lines[i].split(/[,;\t]/);
+        if(cols.length<2)continue;
+        let dateStr=dateIdx>=0?cols[dateIdx]?.trim():'';
+        let parsedDate=td();
+        if(dateStr){try{const d=new Date(dateStr);if(!isNaN(d))parsedDate=d.toISOString().split('T')[0];}catch{}}
+        let amt=0,type='expense';
+        if(incomeIdx>=0&&expIdx>=0){
+          const inc=parseFloat(cols[incomeIdx]?.replace(/[^0-9.-]/g,''))||0;
+          const exp=parseFloat(cols[expIdx]?.replace(/[^0-9.-]/g,''))||0;
+          if(inc>0){amt=inc;type='income';}else if(exp>0){amt=exp;type='expense';}else continue;
+        }else if(amtIdx>=0){
+          const raw=parseFloat(cols[amtIdx]?.replace(/[^0-9.-]/g,''));
+          if(isNaN(raw)||raw===0)continue;
+          amt=Math.abs(raw);
+          if(typeIdx>=0){const tv=cols[typeIdx]?.toLowerCase()||'';type=tv.includes('income')||tv.includes('in')?'income':'expense';}
+          else type=raw<0?'expense':'income';
+        }else continue;
+        const rawCat=catIdx>=0?cols[catIdx]?.trim()||'Other':'Other';
+        const cat=mmMapCat(rawCat);
+        const desc=descIdx>=0?cols[descIdx]?.trim()||cat:cat;
+        const key=`${parsedDate}|${amt}|${desc}`;
+        if(existingKeys.has(key)){skipped++;continue;}
+        existingKeys.add(key);
+        S.transactions.push({id:S.nid++,type,cat,desc,amt,date:parsedDate});
+        imported++;
+      }
     }
     S.transactions.sort((a,b)=>b.date.localeCompare(a.date));
     saveS();renderCash();
-    status.innerHTML=`<span style="color:var(--gr);">✓ Imported ${imported} transactions successfully</span>`;
+    const skipNote=skipped?` (${skipped} duplicate${skipped!==1?'s':''} skipped)`:'';
+    status.innerHTML=`<span style="color:var(--gr);">✓ Imported ${imported} transaction${imported!==1?'s':''}${skipNote}</span>`;
   }catch(e){status.innerHTML=`<span style="color:var(--rd);">Error reading file: ${e.message}</span>`;}
 }
 
@@ -1588,7 +1707,7 @@ function renderGold(){
 // LIVE INDEXES
 // ═══════════════════════════════════════════════════════════
 const IDX_M=[{t:'^GSPC',n:'S&P 500',s:'US large cap'},{t:'^NDX',n:'Nasdaq 100',s:'US tech'},{t:'^DJI',n:'Dow Jones',s:'US blue chip'},{t:'^RUT',n:'Russell 2000',s:'Small cap'},{t:'^STI',n:'STI Singapore',s:'SGX'},{t:'^HSI',n:'Hang Seng',s:'Hong Kong'},{t:'^N225',n:'Nikkei 225',s:'Japan'},{t:'^FTSE',n:'FTSE 100',s:'UK'}];
-const IDX_P=[{t:'NVDA',n:'Nvidia'},{t:'AMZN',n:'Amazon'},{t:'GOOGL',n:'Alphabet'},{t:'META',n:'Meta'},{t:'NFLX',n:'Netflix'},{t:'MSFT',n:'Microsoft'},{t:'UNH',n:'UnitedHealth'},{t:'V',n:'Visa'},{t:'JPM',n:'JP Morgan'},{t:'VWRA',n:'VWRA ETF'},{t:'CSPX',n:'S&P500 ETF'},{t:'SNAP',n:'Snap'}];
+// IDX_P is now built dynamically from S.holdings in renderIndexes()
 const IDX_C=[{t:'GC=F',n:'Gold',s:'USD/oz'},{t:'SI=F',n:'Silver',s:'USD/oz'},{t:'CL=F',n:'Crude Oil WTI',s:'USD/bbl'},{t:'USDSGD=X',n:'USD/SGD',s:'FX'},{t:'EURUSD=X',n:'EUR/USD',s:'FX'},{t:'BTC-USD',n:'Bitcoin',s:'USD'},{t:'ETH-USD',n:'Ethereum',s:'USD'},{t:'NG=F',n:'Natural Gas',s:'USD/MMBtu'}];
 const IDX_S=[{t:'XLK',n:'Technology'},{t:'XLF',n:'Financials'},{t:'XLV',n:'Healthcare'},{t:'XLE',n:'Energy'},{t:'ARKK',n:'ARK Innovation'},{t:'VNQ',n:'Real Estate'},{t:'XLI',n:'Industrials'},{t:'XLP',n:'Consumer Staples'},{t:'XLB',n:'Materials'},{t:'XLC',n:'Communication'}];
 
@@ -1600,10 +1719,15 @@ async function renderIndexes(){
   document.getElementById('idx-status').innerHTML=`NYSE <strong style="color:${nyOpen?'var(--gr)':'var(--mu)'}">${nyOpen?'Open':'Closed'}</strong>&nbsp;·&nbsp;SGX <strong style="color:${sgOpen?'var(--gr)':'var(--mu)'}">${sgOpen?'Open':'Closed'}</strong>`;
   ['idx-major','idx-port','idx-comm'].forEach(id=>document.getElementById(id).innerHTML='<div class="ld-txt" style="color:var(--mu);font-size:11px;padding:.5rem;">Fetching</div>');
   document.getElementById('idx-sect').innerHTML='<div class="ld-txt" style="color:var(--mu);font-size:11px;padding:.5rem;">Fetching</div>';
+  // Build portfolio index list from actual holdings
+  const IDX_P=[...new Set(S.holdings.map(h=>h.ticker))].map(t=>{const h=S.holdings.find(x=>x.ticker===t);return{t,n:h?.name||t};});
   const all=[...IDX_M,...IDX_P,...IDX_C,...IDX_S],uniq=[...new Set(all.map(x=>x.t))];
   const res=await Promise.allSettled(uniq.map(t=>fetchQ(t).then(q=>({t,q}))));
   res.forEach(r=>{if(r.status==='fulfilled'&&r.value.q)idxQ[r.value.t]=r.value.q;});
-  renderIdxGroup('idx-major',IDX_M);renderIdxGroup('idx-port',IDX_P);renderIdxGroup('idx-comm',IDX_C);renderSect();
+  renderIdxGroup('idx-major',IDX_M);
+  if(IDX_P.length>0)renderIdxGroup('idx-port',IDX_P);
+  else document.getElementById('idx-port').innerHTML='<div style="color:var(--mu);font-size:11px;padding:.5rem;">Add holdings to see your portfolio live prices here.</div>';
+  renderIdxGroup('idx-comm',IDX_C);renderSect();
   document.getElementById('idx-upd').textContent='Updated '+new Date().toLocaleTimeString('en-SG',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   idxBusy=false;
 }
@@ -1702,7 +1826,196 @@ function dismissBanner(){document.getElementById('pwa-banner').style.display='no
 window.addEventListener('appinstalled',()=>{document.getElementById('pwa-banner').style.display='none';localStorage.setItem('pwa-dismissed','1');});
 function updateOnline(){document.getElementById('offline-bar').style.display=navigator.onLine?'none':'block';document.getElementById('main-area').style.paddingTop=navigator.onLine?'0':'30px';}
 window.addEventListener('online',()=>{updateOnline();hardRefresh();});window.addEventListener('offline',updateOnline);updateOnline();
+// ═══════════════════════════════════════════════════════════
+// FIREBASE AUTH
+// ═══════════════════════════════════════════════════════════
+function updateAuthUI(){
+  const btn=document.getElementById('auth-btn');
+  if(!btn)return;
+  if(!db){btn.style.display='none';return;}
+  btn.style.display='flex';btn.style.alignItems='center';
+  if(currentUser){
+    btn.innerHTML=`<div style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 10px;border-radius:20px;background:var(--b1);border:1px solid var(--b2);" onclick="fbSignOut()"><img src="${currentUser.photoURL||''}" style="width:18px;height:18px;border-radius:50%;object-fit:cover;" onerror="this.style.display='none'"><span style="font-size:10px;color:var(--mu);font-family:var(--mono);">${(currentUser.displayName||'Me').split(' ')[0]}</span><span style="font-size:9px;color:var(--mu2);margin-left:2px;">✕</span></div>`;
+  }else{
+    btn.innerHTML=`<button class="refresh-btn" onclick="fbSignIn()" style="border-color:rgba(64,144,255,.4);color:#4090ff;background:rgba(64,144,255,.08);">⊙ Sync</button>`;
+  }
+}
+async function fbSignIn(){
+  if(!db)return;
+  try{await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider());}catch(e){console.warn('Sign-in:',e);}
+}
+function fbSignOut(){
+  if(!db)return;
+  firebase.auth().signOut().then(()=>{currentUser=null;updateAuthUI();});
+}
+async function loadFromFirestore(uid){
+  if(!db)return;
+  try{
+    const doc=await db.collection('users').doc(uid).collection('data').doc('state').get();
+    if(doc.exists){
+      const remote=doc.data();
+      Object.assign(S,remote);
+      localStorage.setItem(STORE_KEY,JSON.stringify(S));
+    }else{
+      await db.collection('users').doc(uid).collection('data').doc('state').set(S);
+    }
+    renderDash();renderHoldings();renderCash();renderGold();renderNwChart();
+  }catch(e){console.warn('Firestore load:',e);}
+}
+
+// ═══════════════════════════════════════════════════════════
+// BROKER IMPORT (IBKR / MOOMOO)
+// ═══════════════════════════════════════════════════════════
+let _brokerTab='ibkr';
+const BROKER_INSTRUCTIONS={
+  ibkr:`<b>How to export from IBKR:</b><br>
+1. Log in to Client Portal → Reports → Statements<br>
+2. Choose <b>Activity Statement</b>, set any date range, format <b>CSV</b><br>
+3. Download and drop the file here. Only the <em>Positions</em> section is used.`,
+  moomoo:`<b>How to export from Moomoo:</b><br>
+1. Open Moomoo → Portfolio → tap ⋯ (top-right) → Export<br>
+2. Choose <b>Export Holdings</b> (Excel format)<br>
+3. Download and drop the .xlsx file here.`
+};
+function openBrokerModal(){
+  const m=document.getElementById('broker-modal');
+  m.style.display='flex';
+  setBrokerTab('ibkr');
+  document.getElementById('broker-preview').innerHTML='';
+}
+function closeBrokerModal(){document.getElementById('broker-modal').style.display='none';}
+function setBrokerTab(tab){
+  _brokerTab=tab;
+  document.getElementById('bm-tab-ibkr').className=tab==='ibkr'?'btn btn-gr':'refresh-btn';
+  document.getElementById('bm-tab-moomoo').className=tab==='moomoo'?'btn btn-gr':'refresh-btn';
+  document.getElementById('bm-tab-ibkr').style.cssText=tab==='ibkr'?'font-size:11px;padding:5px 16px;':'font-size:11px;padding:5px 16px;';
+  document.getElementById('bm-tab-moomoo').style.cssText=tab==='moomoo'?'font-size:11px;padding:5px 16px;':'font-size:11px;padding:5px 16px;';
+  document.getElementById('bm-instructions').innerHTML=BROKER_INSTRUCTIONS[tab];
+  document.getElementById('broker-preview').innerHTML='';
+  document.getElementById('broker-file-input').value='';
+}
+function handleBrokerDrop(e){
+  e.preventDefault();
+  document.getElementById('broker-upload-zone').classList.remove('drag');
+  parseBrokerFile(e.dataTransfer.files[0]);
+}
+function handleBrokerFile(e){parseBrokerFile(e.target.files[0]);}
+async function parseBrokerFile(file){
+  if(!file)return;
+  const prev=document.getElementById('broker-preview');
+  prev.innerHTML='<div style="color:var(--mu);font-size:11px;">Reading file...</div>';
+  try{
+    let rows;
+    if(file.name.match(/\.xlsx?$/i)){
+      const buf=await file.arrayBuffer();
+      const wb=XLSX.read(buf,{type:'array'});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      rows=XLSX.utils.sheet_to_json(ws,{defval:''});
+    }else{
+      const text=await file.text();
+      const lines=text.split('\n').map(l=>l.trim()).filter(l=>l);
+      // Find the Positions section in IBKR activity statement
+      let start=0;
+      const posIdx=lines.findIndex(l=>l.toLowerCase().startsWith('positions,header'));
+      if(posIdx>=0){start=posIdx;}
+      const headers=lines[start].split(',').map(h=>h.replace(/"/g,'').trim());
+      rows=[];
+      for(let i=start+1;i<lines.length;i++){
+        const cols=lines[i].split(',').map(c=>c.replace(/"/g,'').trim());
+        if(cols[0]&&cols[0].toLowerCase().startsWith('positions,data')){
+          const row={};headers.forEach((h,j)=>{row[h]=cols[j]||'';});rows.push(row);
+        }else if(!lines[i].toLowerCase().startsWith('positions')&&posIdx>=0)break;
+        else if(posIdx<0){const row={};headers.forEach((h,j)=>{row[h]=cols[j]||'';});rows.push(row);}
+      }
+    }
+    const holdings=_brokerTab==='ibkr'?parseIBKR(rows):parseMoomoo(rows);
+    if(!holdings.length){prev.innerHTML='<div style="color:var(--rd);font-size:11px;">No holdings found. Make sure you selected the right file for '+_brokerTab.toUpperCase()+'.</div>';return;}
+    renderBrokerPreview(holdings);
+  }catch(e){document.getElementById('broker-preview').innerHTML=`<div style="color:var(--rd);font-size:11px;">Error reading file: ${e.message}</div>`;}
+}
+function _findCol(row,candidates){
+  const keys=Object.keys(row);
+  for(const c of candidates){const k=keys.find(k=>k.toLowerCase().includes(c.toLowerCase()));if(k)return row[k];}
+  return '';
+}
+function parseIBKR(rows){
+  const results=[];
+  for(const row of rows){
+    const ticker=(_findCol(row,['Symbol','Ticker','symbol'])||'').trim().replace(/\s/g,'');
+    const qtyRaw=_findCol(row,['Quantity','Qty','Position','Shares']);
+    const costRaw=_findCol(row,['Cost Price','Average Cost','Avg Cost','CostBasisPrice']);
+    const assetClass=(_findCol(row,['Asset Class','AssetClass','Security Type'])||'').toLowerCase();
+    const qty=parseFloat(String(qtyRaw).replace(/[^0-9.-]/g,''));
+    const cost=parseFloat(String(costRaw).replace(/[^0-9.-]/g,''));
+    if(!ticker||isNaN(qty)||qty<=0||isNaN(cost)||cost<=0)continue;
+    let type='US Stock';
+    if(assetClass.includes('etf')||ticker.match(/^(SPY|QQQ|VTI|VOO|VEA|IWM|GLD|SLV|XL[A-Z]|ARK[A-Z])/i))type='ETF';
+    results.push({ticker,name:_findCol(row,['Description','Name','Company'])||ticker,qty,cost,type,account:'IBKR'});
+  }
+  return results;
+}
+function parseMoomoo(rows){
+  const results=[];
+  for(const row of rows){
+    const ticker=(_findCol(row,['Stock Code','Symbol','Code','Ticker','symbol'])||'').trim();
+    const qtyRaw=_findCol(row,['Qty','Quantity','Shares','Held','quantity']);
+    const costRaw=_findCol(row,['Avg Cost','Average Cost','Cost Price','avg cost','cost']);
+    const qty=parseFloat(String(qtyRaw).replace(/[^0-9.-]/g,''));
+    const cost=parseFloat(String(costRaw).replace(/[^0-9.-]/g,''));
+    if(!ticker||isNaN(qty)||qty<=0||isNaN(cost)||cost<=0)continue;
+    results.push({ticker,name:_findCol(row,['Stock Name','Name','company'])||ticker,qty,cost,type:'US Stock',account:'Moomoo'});
+  }
+  return results;
+}
+let _pendingBrokerHoldings=[];
+function renderBrokerPreview(holdings){
+  _pendingBrokerHoldings=holdings;
+  const prev=document.getElementById('broker-preview');
+  prev.innerHTML=`
+    <div style="font-family:var(--sans);font-size:11px;font-weight:700;margin-bottom:.65rem;color:var(--gr);">Found ${holdings.length} position${holdings.length!==1?'s':''} — review before importing:</div>
+    <div style="overflow-x:auto;margin-bottom:1rem;">
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead><tr style="color:var(--mu);border-bottom:1px solid var(--b2);">
+          <th style="text-align:left;padding:.4rem .5rem;">Ticker</th>
+          <th style="text-align:left;padding:.4rem .5rem;">Name</th>
+          <th style="text-align:right;padding:.4rem .5rem;">Qty</th>
+          <th style="text-align:right;padding:.4rem .5rem;">Avg Cost (USD)</th>
+          <th style="text-align:left;padding:.4rem .5rem;">Type</th>
+          <th style="text-align:left;padding:.4rem .5rem;">Account</th>
+        </tr></thead>
+        <tbody>${holdings.map(h=>`<tr style="border-bottom:1px solid var(--b1);">
+          <td style="padding:.35rem .5rem;font-weight:700;color:var(--gr);">${h.ticker}</td>
+          <td style="padding:.35rem .5rem;color:var(--mu);">${h.name.slice(0,24)}</td>
+          <td style="padding:.35rem .5rem;text-align:right;">${h.qty}</td>
+          <td style="padding:.35rem .5rem;text-align:right;">$${h.cost.toFixed(2)}</td>
+          <td style="padding:.35rem .5rem;color:var(--mu);">${h.type}</td>
+          <td style="padding:.35rem .5rem;color:#4090ff;">${h.account}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-gr" onclick="confirmBrokerImport(false)">Merge with existing</button>
+      <button class="refresh-btn" onclick="confirmBrokerImport(true)" style="border-color:rgba(255,69,69,.4);color:#ff4545;background:rgba(255,69,69,.08);">Replace all ${_brokerTab.toUpperCase()} holdings</button>
+    </div>`;
+}
+function confirmBrokerImport(replace){
+  const acct=_brokerTab==='ibkr'?'IBKR':'Moomoo';
+  if(replace)S.holdings=S.holdings.filter(h=>h.account!==acct);
+  for(const h of _pendingBrokerHoldings){
+    const ex=S.holdings.findIndex(x=>x.ticker===h.ticker&&x.account===acct);
+    if(ex>=0)S.holdings[ex]={...S.holdings[ex],qty:h.qty,cost:h.cost};
+    else S.holdings.push(h);
+  }
+  saveS();
+  const newTickers=_pendingBrokerHoldings.map(h=>h.ticker);
+  Promise.all(newTickers.map(t=>fetchQ(t).then(q=>{if(q)LD[t]=q;}))).then(()=>renderHoldings());
+  renderDash();
+  closeBrokerModal();
+}
+
+// ═══════════════════════════════════════════════════════════
 // Mobile sidebar
+// ═══════════════════════════════════════════════════════════
 function closeMobileSidebar(){if(window.innerWidth<=768){const s=document.getElementById('sidebar'),o=document.getElementById('sb-ov');if(s)s.style.transform='translateX(-100%)';if(o)o.style.display='none';}}
 function initMobile(){
   if(window.innerWidth>768)return;
