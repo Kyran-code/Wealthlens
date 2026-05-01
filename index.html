@@ -2048,6 +2048,20 @@
           <div class="stl">Spot prices</div>
           <div class="kpi-row" id="gold-kpis" style="font-size:1.1em;"></div>
         </div>
+        <!-- Spot price charts -->
+        <div class="sec">
+          <div class="stl">Price history (1 year)</div>
+          <div class="two-col" style="align-items:start;">
+            <div class="card">
+              <div class="card-h">Gold (USD/oz)</div>
+              <div style="height:180px;position:relative;"><canvas id="c-gold-spot"></canvas></div>
+            </div>
+            <div class="card">
+              <div class="card-h">Silver (USD/oz)</div>
+              <div style="height:180px;position:relative;"><canvas id="c-silver-spot"></canvas></div>
+            </div>
+          </div>
+        </div>
         <!-- Holdings -->
         <div class="sec">
           <div class="stl">My holdings</div>
@@ -2323,7 +2337,7 @@
     let LD = {}, FD = {}, sparkCache = {}, sparkIntraCache = {}, newsCache = {};
     let NWR = 7, goldUnit = 'g';
     let cashMonth = td().slice(0, 7); // currently viewed YYYY-MM for expense tracker
-    let C = { nw: null, stocks: null, metals: null, alloc: null, spend: null, flow: null, bench: null, sector: null, goldAlloc: null };
+    let C = { nw: null, stocks: null, metals: null, alloc: null, spend: null, flow: null, bench: null, sector: null, goldAlloc: null, goldSpotChart: null, silverSpotChart: null };
     let mChart = null;
     let idxQ = {}, idxBusy = false, spxCache = null;
     let deferredPrompt = null;
@@ -3327,24 +3341,38 @@
           const ws = wb.Sheets[wb.SheetNames[0]];
           rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
         }
-        // Deduplicate key: date+amount+desc to avoid double-import
-        const existingKeys = new Set(S.transactions.map(t => `${t.date}|${t.amt}|${t.desc}`));
-        let imported = 0, skipped = 0;
+        // Parse a date value from a cell (handles Date objects, Excel serials, and common string formats)
+        function parseCellDate(raw) {
+          if (!raw && raw !== 0) return null;
+          if (raw instanceof Date && !isNaN(raw)) {
+            return raw.getFullYear() + '-' + String(raw.getMonth()+1).padStart(2,'0') + '-' + String(raw.getDate()).padStart(2,'0');
+          }
+          if (typeof raw === 'number' && raw > 1000) {
+            // Excel serial date (days since Jan 1 1900, with leap-year bug offset)
+            const d = new Date((raw - 25569) * 86400 * 1000);
+            return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+          }
+          const s = String(raw).trim();
+          // YYYY-MM-DD or YYYY/MM/DD
+          const m1 = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+          if (m1) return `${m1[1]}-${m1[2].padStart(2,'0')}-${m1[3].padStart(2,'0')}`;
+          // DD/MM/YYYY or M/D/YYYY — if first part > 12 it must be the day
+          const m2 = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+          if (m2) {
+            const a = parseInt(m2[1]);
+            if (a > 12) return `${m2[3]}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}`;
+            return `${m2[3]}-${m2[1].padStart(2,'0')}-${m2[2].padStart(2,'0')}`;
+          }
+          return null;
+        }
+        let imported = 0;
         if (rows) {
           // XLSX path — Money Manager structured format
           for (const row of rows) {
             const keys = Object.keys(row);
             const getCol = (...cands) => { for (const c of cands) { const k = keys.find(k => k.toLowerCase().includes(c.toLowerCase())); if (k) return String(row[k] || '').trim(); } return ''; };
-            let dateStr = getCol('date', '날짜');
-            let parsedDate = td();
-            if (dateStr) {
-              // Handle Excel serial dates (numbers) or date objects
-              const d = row[keys.find(k => k.toLowerCase().includes('date')) || ''];
-              if (d instanceof Date && !isNaN(d)) {
-                // Use local getters — SheetJS dates are local time, toISOString() would shift by timezone
-                parsedDate = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-              } else { try { const pd = new Date(dateStr.replace(/-/g,'/')); if (!isNaN(pd)) parsedDate = pd.getFullYear() + '-' + String(pd.getMonth()+1).padStart(2,'0') + '-' + String(pd.getDate()).padStart(2,'0'); } catch { } }
-            }
+            const dateKey = keys.find(k => k.toLowerCase().includes('date') || k.toLowerCase().includes('날짜'));
+            const parsedDate = (dateKey && parseCellDate(row[dateKey])) || td();
             const rawType = getCol('type', 'income/expense', 'in/out').toLowerCase();
             const rawCat = getCol('category', 'categ');
             const rawAmt = getCol('amount', 'amt', 'money').replace(/[^0-9.-]/g, '');
@@ -3354,11 +3382,7 @@
             const mappedCat = mmMapCat(rawCat);
             const isIncomeCat = ['NS Pay','Allowance (parents)','Business income','Investment return'].includes(mappedCat);
             const type = rawType === 'income' || rawType.startsWith('inc') || isIncomeCat ? 'income' : 'expense';
-            const cat = mappedCat;
-            const key = `${parsedDate}|${Math.abs(amt)}|${rawDesc}`;
-            if (existingKeys.has(key)) { skipped++; continue; }
-            existingKeys.add(key);
-            S.transactions.push({ id: S.nid++, type, cat, desc: rawDesc || cat, amt: Math.abs(amt), date: parsedDate });
+            S.transactions.push({ id: S.nid++, type, cat: mappedCat, desc: rawDesc || mappedCat, amt: Math.abs(amt), date: parsedDate });
             imported++;
           }
         } else {
@@ -3377,9 +3401,8 @@
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(/[,;\t]/);
             if (cols.length < 2) continue;
-            let dateStr = dateIdx >= 0 ? cols[dateIdx]?.trim() : '';
-            let parsedDate = td();
-            if (dateStr) { try { const d = new Date(dateStr.replace(/-/g,'/')); if (!isNaN(d)) parsedDate = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); } catch { } }
+            const dateRaw = dateIdx >= 0 ? cols[dateIdx]?.trim() : '';
+            const parsedDate = (dateRaw && parseCellDate(dateRaw)) || td();
             let amt = 0, type = 'expense';
             if (incomeIdx >= 0 && expIdx >= 0) {
               const inc = parseFloat(cols[incomeIdx]?.replace(/[^0-9.-]/g, '')) || 0;
@@ -3395,17 +3418,13 @@
             const rawCat = catIdx >= 0 ? cols[catIdx]?.trim() || 'Other' : 'Other';
             const cat = mmMapCat(rawCat);
             const desc = descIdx >= 0 ? cols[descIdx]?.trim() || cat : cat;
-            const key = `${parsedDate}|${amt}|${desc}`;
-            if (existingKeys.has(key)) { skipped++; continue; }
-            existingKeys.add(key);
             S.transactions.push({ id: S.nid++, type, cat, desc, amt, date: parsedDate });
             imported++;
           }
         }
         S.transactions.sort((a, b) => b.date.localeCompare(a.date));
         saveS(); renderCash();
-        const skipNote = skipped ? ` (${skipped} duplicate${skipped !== 1 ? 's' : ''} skipped)` : '';
-        status.innerHTML = `<span style="color:var(--gr);">✓ Imported ${imported} transaction${imported !== 1 ? 's' : ''}${skipNote}</span>`;
+        status.innerHTML = `<span style="color:var(--gr);">✓ Imported ${imported} transaction${imported !== 1 ? 's' : ''}</span>`;
       } catch (e) { status.innerHTML = `<span style="color:var(--rd);">Error reading file: ${e.message}</span>`; }
     }
 
@@ -3561,6 +3580,38 @@
       <div class="leg-item"><div class="leg-dot" style="background:#ffb740"></div><span style="color:var(--mu)">Gold</span><span style="margin-left:auto">${Math.round(goldV / t * 100)}%</span></div>
       <div class="leg-item"><div class="leg-dot" style="background:#bbb"></div><span style="color:var(--mu)">Silver</span><span style="margin-left:auto">${Math.round(silvV / t * 100)}%</span></div>`;
       }
+
+      // Spot price history charts (async, non-blocking)
+      renderMetalsPriceCharts();
+    }
+
+    async function renderMetalsPriceCharts() {
+      function buildSpotChart(canvasId, chartKey, hist, color, colorBg) {
+        const el = document.getElementById(canvasId);
+        if (!el || !hist?.length) return;
+        // Format x labels as "Jan '25"
+        const labels = hist.map(p => {
+          const [y, m] = p.x.split('-');
+          return new Date(+y, +m - 1, 1).toLocaleDateString('en-SG', { month: 'short', year: '2-digit' });
+        });
+        const vals = hist.map(p => p.y);
+        if (C[chartKey]) C[chartKey].destroy();
+        C[chartKey] = new Chart(el.getContext('2d'), {
+          type: 'line',
+          data: { labels, datasets: [{ data: vals, borderColor: color, backgroundColor: colorBg, borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: true }] },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+              x: { grid: { display: false }, ticks: { color: '#6b7a99', font: { size: 10 }, maxTicksLimit: 6, maxRotation: 0 } },
+              y: { position: 'right', grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#6b7a99', font: { size: 10 }, callback: v => '$' + v.toLocaleString() } }
+            },
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => '$' + ctx.parsed.y.toFixed(2) } } }
+          }
+        });
+      }
+      const [gHist, sHist] = await Promise.all([fetchHist('GC=F', '1y'), fetchHist('SI=F', '1y')]);
+      buildSpotChart('c-gold-spot', 'goldSpotChart', gHist, '#ffb740', 'rgba(255,183,64,0.07)');
+      buildSpotChart('c-silver-spot', 'silverSpotChart', sHist, '#c0c0c0', 'rgba(192,192,192,0.07)');
     }
 
     // ═══════════════════════════════════════════════════════════
