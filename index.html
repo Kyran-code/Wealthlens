@@ -26,22 +26,22 @@
    VARIABLES & RESET
 ═══════════════════════════════════════ */
     :root {
-      --bg: #0d111e;
-      --s1: #131927;
-      --s2: #1a2338;
-      --s3: #202b42;
+      --bg: #050505;
+      --s1: #0c0c0c;
+      --s2: #141414;
+      --s3: #1c1c1c;
       --b1: rgba(255, 255, 255, 0.05);
       --b2: rgba(255, 255, 255, 0.10);
       --b3: rgba(255, 255, 255, 0.20);
       --tx: #e4eaf8;
       --mu: #6b7a99;
       --mu2: #3a4560;
-      --gr: #00e5a0;
-      --rd: #ff4545;
+      --gr: #34d399;
+      --rd: #f87171;
       --bl: #4090ff;
       --gd: #ffb740;
       --pu: #a855f7;
-      --grb: rgba(0, 229, 160, 0.10);
+      --grb: rgba(52, 211, 153, 0.08);
       --mono: 'JetBrains Mono', monospace;
       --sans: 'Syne', sans-serif;
       --sb: 220px;
@@ -324,7 +324,7 @@
 
     .stl {
       font-family: var(--sans);
-      font-size: 10px;
+      font-size: 15px;
       font-weight: 700;
       letter-spacing: .12em;
       text-transform: uppercase;
@@ -579,26 +579,26 @@
 
     .mover-tk {
       font-weight: 700;
-      font-size: 13px;
+      font-size: 15px;
       letter-spacing: .03em;
       display: inline;
     }
 
     .mover-nm {
-      font-size: 9px;
+      font-size: 11px;
       color: var(--mu);
       margin-top: 2px;
     }
 
     .mover-pr {
       font-family: var(--sans);
-      font-size: 1.05rem;
+      font-size: 1.2rem;
       font-weight: 700;
       margin-top: .45rem;
     }
 
     .mover-ch {
-      font-size: 10px;
+      font-size: 13px;
       font-weight: 700;
       margin-top: 1px;
     }
@@ -1996,11 +1996,16 @@
 
       <!-- ██ GOLD ██ -->
       <div id="page-gold" class="page">
-        <!-- Holdings FIRST -->
+        <!-- Spot prices FIRST -->
+        <div class="sec">
+          <div class="stl">Spot prices</div>
+          <div class="kpi-row" id="gold-kpis" style="font-size:1.1em;"></div>
+        </div>
+        <!-- Holdings -->
         <div class="sec">
           <div class="stl">My holdings</div>
           <div class="kpi-row" id="gold-strip" style="margin-bottom:1rem;"></div>
-          <div class="two-col" style="margin-bottom:1rem;">
+          <div class="two-col" style="margin-bottom:1rem;align-items:start;">
             <div id="gold-list"></div>
             <div class="card">
               <div class="card-h">Gold vs Silver allocation</div>
@@ -2010,11 +2015,6 @@
               </div>
             </div>
           </div>
-        </div>
-        <!-- Spot prices -->
-        <div class="sec">
-          <div class="stl">Spot prices</div>
-          <div class="kpi-row" id="gold-kpis"></div>
         </div>
         <!-- Add entry LAST -->
         <div class="sec">
@@ -2315,12 +2315,15 @@
     function mstr(d) { return new Date(d + 'T00:00:00').toISOString().slice(0, 7); }
     function goldGrams() { return S.goldEntries.filter(g => g.metal === 'Gold').reduce((s, g) => s + g.mass, 0); }
     function calcCash() { const i = S.transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amt, 0); const e = S.transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amt, 0); return S.cashBase + i - e; }
-    function logoUrl(ticker) { return `https://assets.parqet.com/logos/symbol/${ticker.toUpperCase()}?format=png`; }
+    function logoBaseTicker(ticker) {
+      return ticker.replace(/\.(L|HK|SI|AX|TO|PA|DE|AS|NZ|OL|ST|CO|HE)$/i, '');
+    }
+    function logoUrl(ticker) { const t = logoBaseTicker(ticker); return `https://assets.parqet.com/logos/symbol/${t.toUpperCase()}?format=png`; }
     function logoFallbacks(ticker) {
+      const t = logoBaseTicker(ticker);
       return [
-        `https://assets.parqet.com/logos/symbol/${ticker.toUpperCase()}?format=png`,
-        `https://logo.clearbit.com/${ticker.toLowerCase()}.com`,
-        `https://cdn.jsdelivr.net/gh/nvstly/icons/ticker/${ticker.toUpperCase()}.png`,
+        `https://assets.parqet.com/logos/symbol/${t.toUpperCase()}?format=png`,
+        `https://logo.clearbit.com/${t.toLowerCase()}.com`,
       ];
     }
     function setLogoWithFallback(img, ticker) {
@@ -2506,7 +2509,11 @@
       return FD[ticker];
     }
     const EXCH_SUFFIX = { LSE: '.L', HKEx: '.HK', SGX: '.SI', ASX: '.AX' };
-    function yfSymbol(h) { return h.ticker + (EXCH_SUFFIX[h.exchange] || ''); }
+    function yfSymbol(h) {
+      const suffix = EXCH_SUFFIX[h.exchange] || '';
+      if (!suffix || h.ticker.toUpperCase().endsWith(suffix.toUpperCase())) return h.ticker;
+      return h.ticker + suffix;
+    }
     async function fetchNews(ticker, count = 5) {
       const key = ticker + '_' + count;
       if (newsCache[key] && Date.now() - newsCache[key]._ts < 900000) return newsCache[key].items;
@@ -2594,21 +2601,24 @@
       const gl = tMV - tC, glP = tC ? gl / tC * 100 : 0;
       const day = merged.reduce((s, h) => { const l = LD[h.ticker]; return l ? s + (l.price - l.prev) * h.totalQty : s; }, 0);
       const gG = goldGrams(), gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
+      const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
+      const metalsUSD = gUSD + sUSD;
       const cash = calcCash(); const hasLive = Object.keys(LD).length > 0;
-      const nw = tMV * USD + gUSD * USD + cash;
+      const nw = tMV * USD + metalsUSD * USD + cash;
       if (hasLive && tMV > 0) saveNwSnap(nw);
       document.getElementById('kpi-strip').innerHTML = `
-    <div class="kpi"><div class="kpi-l">Portfolio value</div><div class="kpi-v">${fS(tMV)}</div><div class="kpi-s">${hasLive ? 'live prices' : 'cost basis'}</div></div>
-    <div class="kpi"><div class="kpi-l">Total gain/loss</div><div class="kpi-v ${gl >= 0 ? 'g' : 'r'}">${gl >= 0 ? '+' : ''}${fS(gl)}</div><div class="kpi-s">${pct(glP)} all time</div></div>
-    <div class="kpi"><div class="kpi-l">Day P&amp;L</div><div class="kpi-v ${day >= 0 ? 'g' : 'r'}">${day >= 0 ? '+' : '−'}${fSr(Math.abs(day * USD))}</div><div class="kpi-s">today</div></div>
-    <div class="kpi"><div class="kpi-l">Gold value</div><div class="kpi-v gd">${gUSD ? fS(gUSD) : '—'}</div><div class="kpi-s">${gG}g physical</div></div>
-    <div class="kpi"><div class="kpi-l">Cash</div><div class="kpi-v g">${fSr(cash)}</div><div class="kpi-s">liquid</div></div>
-    <div class="kpi"><div class="kpi-l">Net worth</div><div class="kpi-v">${nw > 500 ? fSr(nw) : '—'}</div><div class="kpi-s">all assets</div></div>`;
+  <div class="kpi"><div class="kpi-l">Portfolio</div><div class="kpi-v">${fS(tMV)}</div><div class="kpi-s">${hasLive ? 'live · stocks + funds' : 'cost basis'}</div></div>
+  <div class="kpi"><div class="kpi-l">Metals</div><div class="kpi-v gd">${metalsUSD ? fS(metalsUSD) : '—'}</div><div class="kpi-s">gold + silver</div></div>
+  <div class="kpi"><div class="kpi-l">Cash</div><div class="kpi-v" style="color:var(--bl)">${fSr(cash)}</div><div class="kpi-s">liquid SGD</div></div>
+  <div class="kpi"><div class="kpi-l">Net Worth</div><div class="kpi-v">${nw > 500 ? fSr(nw) : '—'}</div><div class="kpi-s">all assets</div></div>
+  <div class="kpi"><div class="kpi-l">Total G/L</div><div class="kpi-v ${gl >= 0 ? 'g' : 'r'}">${gl >= 0 ? '+' : ''}${fS(gl)}</div><div class="kpi-s">${pct(glP)} all time</div></div>
+  <div class="kpi"><div class="kpi-l">Day P&L</div><div class="kpi-v ${day >= 0 ? 'g' : 'r'}">${day >= 0 ? '+' : '−'}${fSr(Math.abs(day * USD))}</div><div class="kpi-s">today vs yesterday</div></div>`;
     }
 
     async function renderMovers() {
       const merged = mergedHoldings();
-      const items = merged.map(h => { const l = LD[h.ticker]; const dp = l && l.prev ? (l.price - l.prev) / l.prev * 100 : null; return { ...h, price: l?.price, dp }; }).filter(h => h.dp !== null).sort((a, b) => Math.abs(b.dp) - Math.abs(a.dp)).slice(0, 8);
+      const items = merged.map(h => { const l = LD[h.ticker]; const dp = l && l.prev ? (l.price - l.prev) / l.prev * 100 : null; return { ...h, price: l?.price, dp }; }).filter(h => h.dp !== null).sort((a, b) => Math.abs(b.dp) - Math.abs(a.dp));
       if (!items.length) { document.getElementById('movers').innerHTML = '<div style="color:var(--mu);font-size:11px;padding:.5rem;">Fetching live data...</div>'; return; }
       // Render cards first, then add mini sparklines
       document.getElementById('movers').innerHTML = items.map(h => `
@@ -2640,8 +2650,11 @@
       const groups = {};
       merged.forEach(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; groups[h.type] = (groups[h.type] || 0) + v; });
       const gg = goldGrams(); if (goldSpot && gg > 0) groups['Gold'] = goldSpot / 31.1035 * gg;
+      const sg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      if (silverSpot && sg > 0) groups['Silver'] = silverSpot / 31.1035 * sg;
       groups['Cash'] = calcCash() / USD;
-      const labels = Object.keys(groups), vals = Object.values(groups).map(Math.round);
+      const sortedG = Object.entries(groups).sort((a, b) => b[1] - a[1]);
+      const labels = sortedG.map(e => e[0]), vals = sortedG.map(e => Math.round(e[1]));
       const colors = ['#4090ff', '#00e5a0', '#ffb740', '#a855f7', '#f04a4a', '#c8f542'];
       const total = vals.reduce((a, b) => a + b, 0) || 1;
       document.getElementById('alloc-total').innerHTML = 'SGD ' + Math.round(total * USD).toLocaleString();
@@ -2701,7 +2714,8 @@
       const merged = mergedHoldings();
       const secMap = {};
       merged.forEach(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; const sec = FD[h.ticker]?.sector || SECTORS[h.ticker] || 'Other'; secMap[sec] = (secMap[sec] || 0) + v; });
-      const sL = Object.keys(secMap), sV = Object.values(secMap);
+      const sortedSec = Object.entries(secMap).sort((a, b) => b[1] - a[1]);
+      const sL = sortedSec.map(e => e[0]), sV = sortedSec.map(e => e[1]);
       const sC = ['#4090ff', '#00e5a0', '#ffb740', '#a855f7', '#f04a4a', '#c8f542', '#42d4f5'];
       const sT = sV.reduce((a, b) => a + b, 0) || 1;
       const ctxSec = document.getElementById('c-sector').getContext('2d');
@@ -2974,8 +2988,8 @@
       const wrap = document.getElementById('brief-content');
       if (!wrap) return;
       const merged = mergedHoldings();
-      if (!merged.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:11px;">Add holdings to see your portfolio briefing.</div>'; return; }
-      wrap.innerHTML = '<div style="color:var(--mu);font-size:11px;">Loading briefing…</div>';
+      if (!merged.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;">Add holdings to see your portfolio briefing.</div>'; return; }
+      wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;">Loading briefing…</div>';
 
       const withDP = merged.map(h => {
         const l = LD[h.ticker];
@@ -2984,7 +2998,7 @@
         return { ...h, dp, mv, l };
       }).filter(h => h.l);
 
-      if (!withDP.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:11px;">Prices still loading — check back in a moment.</div>'; return; }
+      if (!withDP.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:13px;">Prices still loading — check back in a moment.</div>'; return; }
 
       // Overall portfolio day change
       const totalMV = withDP.reduce((s, h) => s + h.mv, 0);
@@ -3009,13 +3023,13 @@
         const up = totalDp >= 0;
         html += `<div style="margin-bottom:1rem;padding:.75rem 1rem;background:${up ? 'rgba(0,229,160,0.07)' : 'rgba(255,69,69,0.07)'};border:1px solid ${up ? 'rgba(0,229,160,0.18)' : 'rgba(255,69,69,0.18)'};border-radius:10px;display:flex;align-items:center;gap:.6rem;">
           <span style="font-size:1.2rem;">${up ? '📈' : '📉'}</span>
-          <div><div style="font-weight:700;font-size:12px;color:${up ? 'var(--gr)' : 'var(--rd)'};">Your portfolio is ${up ? 'up' : 'down'} ${Math.abs(totalDp).toFixed(2)}% today</div>
-          <div style="font-size:9px;color:var(--mu);margin-top:2px;">${withDP.length} position${withDP.length !== 1 ? 's' : ''} tracked · ${gainers.length} up · ${losers.length} down${withDP.length - gainers.length - losers.length > 0 ? ' · ' + (withDP.length - gainers.length - losers.length) + ' flat' : ''}</div></div>
+          <div><div style="font-weight:700;font-size:14px;color:${up ? 'var(--gr)' : 'var(--rd)'};">Your portfolio is ${up ? 'up' : 'down'} ${Math.abs(totalDp).toFixed(2)}% today</div>
+          <div style="font-size:11px;color:var(--mu);margin-top:2px;">${withDP.length} position${withDP.length !== 1 ? 's' : ''} tracked · ${gainers.length} up · ${losers.length} down${withDP.length - gainers.length - losers.length > 0 ? ' · ' + (withDP.length - gainers.length - losers.length) + ' flat' : ''}</div></div>
         </div>`;
       }
 
       if (flat) {
-        html += `<div style="color:var(--mu);font-size:11px;">No significant moves today. Markets may be closed or near open.</div>`;
+        html += `<div style="color:var(--mu);font-size:13px;">No significant moves today. Markets may be closed or near open.</div>`;
       }
 
       const moverCard = (h, dir) => {
@@ -3024,22 +3038,22 @@
         const sign = dir === 'up' ? '+' : '';
         return `<div style="padding:.75rem .9rem;background:var(--s2);border:1px solid var(--b1);border-left:3px solid ${col};border-radius:8px;margin-bottom:.5rem;">
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:${n ? '.45rem' : '0'};">
-            <span style="font-weight:700;font-size:12px;">${h.ticker}</span>
-            <span style="font-weight:700;font-size:11px;color:${col};">${sign}${h.dp.toFixed(2)}%</span>
+            <span style="font-weight:700;font-size:14px;">${h.ticker}</span>
+            <span style="font-weight:700;font-size:13px;color:${col};">${sign}${h.dp.toFixed(2)}%</span>
           </div>
           ${n ? `<a href="${n.link}" target="_blank" rel="noopener" style="text-decoration:none;">
-            <div style="font-size:10px;color:var(--tx);line-height:1.45;">${n.title}</div>
-            <div style="font-size:9px;color:var(--mu);margin-top:.25rem;">${n.publisher} · ${_newsAgo(n.providerPublishTime)}</div>
-          </a>` : '<div style="font-size:10px;color:var(--mu);">No news found.</div>'}
+            <div style="font-size:12px;color:var(--tx);line-height:1.45;">${n.title}</div>
+            <div style="font-size:11px;color:var(--mu);margin-top:.25rem;">${n.publisher} · ${_newsAgo(n.providerPublishTime)}</div>
+          </a>` : '<div style="font-size:12px;color:var(--mu);">No news found.</div>'}
         </div>`;
       };
 
       if (gainers.length) {
-        html += `<div style="font-size:9px;color:var(--gr);text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--sans);margin-bottom:.5rem;">Moving Up</div>`;
+        html += `<div style="font-size:11px;color:var(--gr);text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--sans);margin-bottom:.5rem;">Moving Up</div>`;
         gainers.forEach(h => { html += moverCard(h, 'up'); });
       }
       if (losers.length) {
-        html += `<div style="font-size:9px;color:var(--rd);text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--sans);margin-bottom:.5rem;${gainers.length ? 'margin-top:.85rem;' : ''}">Under Pressure</div>`;
+        html += `<div style="font-size:11px;color:var(--rd);text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--sans);margin-bottom:.5rem;${gainers.length ? 'margin-top:.85rem;' : ''}">Under Pressure</div>`;
         losers.forEach(h => { html += moverCard(h, 'down'); });
       }
 
@@ -3334,7 +3348,7 @@
         <div style="font-weight:700;color:${g.metal === 'Gold' ? 'var(--gd)' : '#bbb'}">${g.metal} · ${displayMass}</div>
         <div style="font-size:10px;color:var(--mu);margin-top:3px;">${g.date} · <span class="badge ${g.src === 'Gift' ? 'be' : 'bu'}">${g.src}</span>${g.note ? ' · ' + g.note : ''}</div>
       </div>
-      <div style="text-align:right;">
+      <div style="text-align:right;min-width:130px;">
         <div style="font-weight:700;">${cv ? fSr(cv) : '—'}</div>
         <div style="font-size:10px;color:var(--mu);">Paid: ${g.paid ? 'SGD ' + g.paid : 'Gift'}</div>
         ${glG !== null ? `<div style="font-size:10px;color:${glG >= 0 ? 'var(--gr)' : 'var(--rd)'};">${glG >= 0 ? '+' : ''}SGD ${Math.round(glG).toLocaleString()}</div>` : ''}
