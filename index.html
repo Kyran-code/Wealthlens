@@ -126,6 +126,9 @@
       #main-area {
         margin-left: 0;
       }
+      #comp-charts {
+        grid-template-columns: 1fr !important;
+      }
     }
 
     /* ═══ SIDEBAR ═══ */
@@ -1796,6 +1799,35 @@
           <div class="nw-ft"><span id="nw-pts">Open daily to build your net worth history.</span><span id="nw-sv" style="color:var(--gr)"></span><button onclick="manualSnap()" style="margin-left:auto;background:none;border:1px solid var(--b2);color:var(--mu);font-size:9px;padding:3px 8px;border-radius:5px;cursor:pointer;font-family:var(--mono);">📸 Save now</button></div>
         </div>
         <div class="kpi-row" id="kpi-strip"></div>
+        <!-- Component history charts -->
+        <div id="comp-charts" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;">
+          <div class="card" style="padding:1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;">
+              <div>
+                <div style="font-size:10px;font-weight:700;color:var(--bl);text-transform:uppercase;letter-spacing:.08em;">Stocks &amp; Funds</div>
+                <div class="nw-big" id="stocks-val" style="font-size:1.25rem;">SGD —</div>
+              </div>
+              <div style="text-align:right;">
+                <div id="stocks-chg" style="font-size:10px;color:var(--mu);"></div>
+                <div style="font-size:9px;color:var(--mu2);margin-top:2px;">portfolio value · SGD</div>
+              </div>
+            </div>
+            <div style="height:110px;position:relative;"><canvas id="stocks-c"></canvas></div>
+          </div>
+          <div class="card" style="padding:1rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.6rem;">
+              <div>
+                <div style="font-size:10px;font-weight:700;color:var(--gd);text-transform:uppercase;letter-spacing:.08em;">Metals</div>
+                <div class="nw-big" id="metals-val" style="font-size:1.25rem;">SGD —</div>
+              </div>
+              <div style="text-align:right;">
+                <div id="metals-chg" style="font-size:10px;color:var(--mu);"></div>
+                <div style="font-size:9px;color:var(--mu2);margin-top:2px;">gold + silver · SGD</div>
+              </div>
+            </div>
+            <div style="height:110px;position:relative;"><canvas id="metals-c"></canvas></div>
+          </div>
+        </div>
         <div class="dash-grid">
           <div>
             <div class="sec">
@@ -2353,7 +2385,7 @@
     let USD = SGDDEF, goldSpot = null, goldDayChg = null, silverSpot = null, silverDayChg = null;
     let LD = {}, FD = {}, sparkCache = {}, sparkIntraCache = {}, newsCache = {};
     let NWR = 7, goldUnit = 'g';
-    let C = { nw: null, alloc: null, spend: null, flow: null, bench: null, sector: null, goldAlloc: null };
+    let C = { nw: null, stocks: null, metals: null, alloc: null, spend: null, flow: null, bench: null, sector: null, goldAlloc: null };
     let mChart = null;
     let idxQ = {}, idxBusy = false, spxCache = null;
     let deferredPrompt = null;
@@ -2685,7 +2717,7 @@
     // ═══════════════════════════════════════════════════════════
     // DASHBOARD
     // ═══════════════════════════════════════════════════════════
-    function renderDash() { renderNwChart(); renderKpi(); renderMovers(); renderAlloc(); renderPortfolioBriefing(); }
+    function renderDash() { renderNwChart(); renderKpi(); renderStocksChart(); renderMetalsChart(); renderMovers(); renderAlloc(); renderPortfolioBriefing(); }
 
     function renderKpi() {
       const merged = mergedHoldings();
@@ -2700,7 +2732,7 @@
       const cash = calcCash(); const hasLive = Object.keys(LD).length > 0;
       const nw = tMV * USD + metalsUSD * USD + cash;
       if (hasLive && tMV > 0) {
-        saveNwSnap(nw);
+        saveNwSnap(nw, false, tMV * USD, metalsUSD * USD);
         // Override the hero NW value with the live figure (renderNwChart shows snapshot)
         if (nw > 500) document.getElementById('nw-val').textContent = 'SGD ' + Math.round(nw).toLocaleString();
       }
@@ -2770,12 +2802,14 @@
     // ═══════════════════════════════════════════════════════════
     // NW CHART
     // ═══════════════════════════════════════════════════════════
-    function saveNwSnap(v, force = false) {
+    function saveNwSnap(v, force = false, stocks = null, metals = null) {
       const k = td();
       const i = S.nwHist.findIndex(p => p.date === k);
       if (i >= 0 && !force) return; // already saved today — only overwrite if user explicitly requests
       const time = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
       const entry = { date: k, v: Math.round(v), t: time };
+      if (stocks !== null) entry.stocks = Math.round(stocks);
+      if (metals !== null) entry.metals = Math.round(metals);
       if (i >= 0) S.nwHist[i] = entry; else S.nwHist.push(entry);
       S.nwHist.sort((a, b) => a.date.localeCompare(b.date));
       saveS();
@@ -2788,11 +2822,12 @@
       const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
       const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
       const cash = calcCash();
-      const nw = tMV * USD + (gUSD + sUSD) * USD + cash;
-      if (tMV > 0) saveNwSnap(nw, true);
+      const metalsVal = (gUSD + sUSD) * USD;
+      const nw = tMV * USD + metalsVal + cash;
+      if (tMV > 0) saveNwSnap(nw, true, tMV * USD, metalsVal);
     }
     function getSlice(days) { if (days >= 9999) return S.nwHist; const cut = new Date(); cut.setDate(cut.getDate() - days); return S.nwHist.filter(p => p.date >= cut.toISOString().split('T')[0]); }
-    function setRng(days, btn) { NWR = days; document.querySelectorAll('.rb').forEach(b => b.classList.remove('on')); btn.classList.add('on'); renderNwChart(); }
+    function setRng(days, btn) { NWR = days; document.querySelectorAll('.rb').forEach(b => b.classList.remove('on')); btn.classList.add('on'); renderNwChart(); renderStocksChart(); renderMetalsChart(); }
     function renderNwChart() {
       let sl = getSlice(NWR), labels, vals;
       if (!sl.length) { labels = [td()]; vals = [0]; } else if (sl.length === 1) { const y = new Date(sl[0].date); y.setDate(y.getDate() - 1); labels = [y.toISOString().split('T')[0], sl[0].date]; vals = [sl[0].v, sl[0].v]; } else { labels = sl.map(p => p.date); vals = sl.map(p => p.v); }
@@ -2810,6 +2845,41 @@
       if (C.nw) C.nw.destroy();
       C.nw = new Chart(ctx, { type: 'line', data: { labels: labels.map(fL), datasets: [{ data: vals, borderColor: lc, backgroundColor: fc, tension: 0.35, pointRadius: vals.length <= 14 ? 3 : 1, pointBackgroundColor: lc, fill: true, borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 10 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
     }
+
+    function renderComponentChart(canvasId, chartKey, valElId, chgElId, field, color, colorBg) {
+      const sl = getSlice(NWR).filter(p => p[field] != null);
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      if (C[chartKey]) C[chartKey].destroy();
+      const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
+      if (!sl.length) {
+        document.getElementById(valElId).textContent = 'SGD —';
+        document.getElementById(chgElId).textContent = 'No history yet';
+        C[chartKey] = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [{ data: [] }] }, options: { responsive: true, maintainAspectRatio: false } });
+        return;
+      }
+      let labels, vals;
+      if (sl.length === 1) {
+        const y = new Date(sl[0].date); y.setDate(y.getDate() - 1);
+        labels = [y.toISOString().split('T')[0], sl[0].date];
+        vals = [sl[0][field], sl[0][field]];
+      } else {
+        labels = sl.map(p => p.date);
+        vals = sl.map(p => p[field]);
+      }
+      const latest = vals[vals.length - 1] || 0, first = vals[0] || 0;
+      const diff = latest - first, diffP = first ? diff / first * 100 : 0, pos = diff >= 0;
+      document.getElementById(valElId).textContent = 'SGD ' + latest.toLocaleString();
+      const chgEl = document.getElementById(chgElId);
+      chgEl.textContent = (pos ? '+' : '−') + 'SGD ' + Math.abs(Math.round(diff)).toLocaleString() + ' (' + (pos ? '+' : '') + diffP.toFixed(2) + '%)';
+      chgEl.style.color = pos ? 'var(--gr)' : 'var(--rd)';
+      C[chartKey] = new Chart(ctx, {
+        type: 'line',
+        data: { labels: labels.map(fL), datasets: [{ data: vals, borderColor: color, backgroundColor: colorBg, tension: 0.35, pointRadius: vals.length <= 14 ? 2 : 0, pointBackgroundColor: color, fill: true, borderWidth: 2 }] },
+        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 9 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } }
+      });
+    }
+    function renderStocksChart() { renderComponentChart('stocks-c', 'stocks', 'stocks-val', 'stocks-chg', 'stocks', '#4090ff', 'rgba(64,144,255,0.07)'); }
+    function renderMetalsChart() { renderComponentChart('metals-c', 'metals', 'metals-val', 'metals-chg', 'metals', '#ffb740', 'rgba(255,183,64,0.07)'); }
 
     // ═══════════════════════════════════════════════════════════
     // ANALYTICS
@@ -3966,7 +4036,7 @@ Respond concisely and helpfully. Format numbers clearly. Do not give specific bu
       const thinkingEl = aiAppendThinking();
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`;
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
