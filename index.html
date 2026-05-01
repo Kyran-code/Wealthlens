@@ -1786,6 +1786,12 @@
             </div>
           </div>
         </div>
+        <div class="sec" style="margin-top:1.5rem;">
+          <div class="stl">Portfolio Briefing <span style="font-size:9px;color:var(--mu);text-transform:none;letter-spacing:0;font-weight:400;">— what's moving your portfolio today</span></div>
+          <div class="card" id="brief-wrap" style="padding:1rem;">
+            <div id="brief-content" style="color:var(--mu);font-size:11px;">Loading briefing…</div>
+          </div>
+        </div>
       </div>
 
       <!-- ██ ANALYTICS ██ -->
@@ -2126,6 +2132,10 @@
             <div style="font-size:9px;color:var(--mu);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.6rem;font-weight:700;font-family:var(--sans);">52-Week Range</div>
             <div id="m-range"></div>
           </div>
+          <div style="margin-top:1.2rem;">
+            <div style="font-size:9px;color:var(--mu);text-transform:uppercase;letter-spacing:.1em;margin-bottom:.6rem;font-weight:700;font-family:var(--sans);" id="m-news-title">Latest News</div>
+            <div id="m-news"></div>
+          </div>
         </div>
 
         <!-- POSITION TAB -->
@@ -2262,7 +2272,7 @@
     // ═══════════════════════════════════════════════════════════
     const SGDDEF = 1.35;
     let USD = SGDDEF, goldSpot = null, goldDayChg = null, silverSpot = null;
-    let LD = {}, FD = {}, sparkCache = {}, sparkIntraCache = {};
+    let LD = {}, FD = {}, sparkCache = {}, sparkIntraCache = {}, newsCache = {};
     let NWR = 7, goldUnit = 'g';
     let C = { nw: null, alloc: null, spend: null, flow: null, bench: null, sector: null, goldAlloc: null };
     let mChart = null;
@@ -2496,6 +2506,25 @@
     }
     const EXCH_SUFFIX = { LSE: '.L', HKEx: '.HK', SGX: '.SI', ASX: '.AX' };
     function yfSymbol(h) { return h.ticker + (EXCH_SUFFIX[h.exchange] || ''); }
+    async function fetchNews(ticker, count = 5) {
+      const key = ticker + '_' + count;
+      if (newsCache[key] && Date.now() - newsCache[key]._ts < 900000) return newsCache[key].items;
+      const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}&newsCount=${count}&enableFuzzyQuery=false`;
+      for (let i = 0; i < PROXIES.length; i++) {
+        try {
+          const r = await fetch(PROXIES[(pI + i) % PROXIES.length](url), { signal: AbortSignal.timeout(8000) });
+          if (!r.ok) continue;
+          const d = await r.json();
+          const items = (d?.news || []).filter(n => n.title);
+          if (items.length) { newsCache[key] = { items, _ts: Date.now() }; return items; }
+        } catch {}
+      }
+      return [];
+    }
+    function _newsAgo(ts) {
+      const h = Math.round((Date.now() / 1000 - ts) / 3600);
+      return h < 1 ? 'Just now' : h < 24 ? h + 'h ago' : Math.round(h / 24) + 'd ago';
+    }
     async function fetchAllQ() {
       // Apply stored manual NAV for SG funds (so LD has a price entry for portfolio totals)
       S.holdings.filter(h => h.exchange === 'SG_FUND' && h.manualPrice).forEach(h => {
@@ -2525,6 +2554,8 @@
       document.getElementById('upd-time').textContent = 'Updated ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
       updateAuthUI();
       if (db) {
+        // Handle redirect result from mobile sign-in
+        firebase.auth().getRedirectResult().catch(() => {});
         firebase.auth().onAuthStateChanged(async user => {
           currentUser = user;
           updateAuthUI();
@@ -2553,7 +2584,7 @@
     // ═══════════════════════════════════════════════════════════
     // DASHBOARD
     // ═══════════════════════════════════════════════════════════
-    function renderDash() { renderKpi(); renderNwChart(); renderMovers(); renderAlloc(); }
+    function renderDash() { renderKpi(); renderNwChart(); renderMovers(); renderAlloc(); renderPortfolioBriefing(); }
 
     function renderKpi() {
       const merged = mergedHoldings();
@@ -2835,7 +2866,11 @@
 
     async function renderHoldings() {
       const body = document.getElementById('h-body');
-      const merged = mergedHoldings();
+      const merged = mergedHoldings().sort((a, b) => {
+        const va = (LD[a.ticker]?.price ?? 0) * a.totalQty || a.totalCost;
+        const vb = (LD[b.ticker]?.price ?? 0) * b.totalQty || b.totalCost;
+        return vb - va;
+      });
       if (!merged.length) { body.innerHTML = '<tr><td colspan="16" style="padding:2rem;text-align:center;color:var(--mu);">No holdings yet. Add one above.</td></tr>'; return; }
       const hasLive = Object.keys(LD).length > 0;
       document.getElementById('tbl-note').textContent = !hasLive ? '⚠ Live prices require an internet connection. Open from GitHub Pages for full functionality.' : '';
@@ -2892,6 +2927,105 @@
     }
 
     // ═══════════════════════════════════════════════════════════
+    // NEWS RENDERING
+    // ═══════════════════════════════════════════════════════════
+    async function renderModalNews(ticker, dp) {
+      const wrap = document.getElementById('m-news');
+      const title = document.getElementById('m-news-title');
+      if (!wrap) return;
+      wrap.innerHTML = '<div style="color:var(--mu);font-size:10px;padding:.5rem 0;">Loading news…</div>';
+      const news = await fetchNews(ticker, 6);
+      if (!news.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:10px;">No recent news found.</div>'; return; }
+      // Direction label based on today's price change
+      if (title && dp !== null) {
+        const dir = dp >= 0 ? '▲' : '▼';
+        const col = dp >= 0 ? 'var(--gr)' : 'var(--rd)';
+        title.innerHTML = `Latest News <span style="color:${col};font-size:9px;">${dir} ${Math.abs(dp).toFixed(2)}% today</span>`;
+      }
+      wrap.innerHTML = news.slice(0, 6).map(n => `
+        <a href="${n.link}" target="_blank" rel="noopener" style="display:block;text-decoration:none;padding:.65rem .8rem;background:var(--s2);border:1px solid var(--b1);border-radius:8px;margin-bottom:.45rem;transition:border-color .15s;" onmouseover="this.style.borderColor='var(--b2)'" onmouseout="this.style.borderColor='var(--b1)'">
+          <div style="font-size:11px;color:var(--tx);font-weight:500;line-height:1.45;margin-bottom:.3rem;">${n.title}</div>
+          <div style="font-size:9px;color:var(--mu);">${n.publisher} · ${_newsAgo(n.providerPublishTime)}</div>
+        </a>`).join('');
+    }
+
+    async function renderPortfolioBriefing() {
+      const wrap = document.getElementById('brief-content');
+      if (!wrap) return;
+      const merged = mergedHoldings();
+      if (!merged.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:11px;">Add holdings to see your portfolio briefing.</div>'; return; }
+      wrap.innerHTML = '<div style="color:var(--mu);font-size:11px;">Loading briefing…</div>';
+
+      const withDP = merged.map(h => {
+        const l = LD[h.ticker];
+        const dp = l?.prev ? (l.price - l.prev) / l.prev * 100 : null;
+        const mv = l ? l.price * h.totalQty : h.totalCost;
+        return { ...h, dp, mv, l };
+      }).filter(h => h.l);
+
+      if (!withDP.length) { wrap.innerHTML = '<div style="color:var(--mu);font-size:11px;">Prices still loading — check back in a moment.</div>'; return; }
+
+      // Overall portfolio day change
+      const totalMV = withDP.reduce((s, h) => s + h.mv, 0);
+      const totalPrev = withDP.reduce((s, h) => s + h.l.prev * h.totalQty, 0);
+      const totalDp = totalPrev ? (totalMV - totalPrev) / totalPrev * 100 : null;
+
+      const gainers = withDP.filter(h => h.dp > 0.3).sort((a, b) => b.dp - a.dp).slice(0, 3);
+      const losers  = withDP.filter(h => h.dp < -0.3).sort((a, b) => a.dp - b.dp).slice(0, 3);
+      const flat    = !gainers.length && !losers.length;
+
+      // Fetch one headline for each significant mover (parallel)
+      const movers = [...gainers, ...losers].slice(0, 5);
+      const newsMap = {};
+      await Promise.all(movers.map(async h => {
+        const items = await fetchNews(h.ticker, 1);
+        if (items.length) newsMap[h.ticker] = items[0];
+      }));
+
+      let html = '';
+      // Portfolio summary banner
+      if (totalDp !== null) {
+        const up = totalDp >= 0;
+        html += `<div style="margin-bottom:1rem;padding:.75rem 1rem;background:${up ? 'rgba(0,229,160,0.07)' : 'rgba(255,69,69,0.07)'};border:1px solid ${up ? 'rgba(0,229,160,0.18)' : 'rgba(255,69,69,0.18)'};border-radius:10px;display:flex;align-items:center;gap:.6rem;">
+          <span style="font-size:1.2rem;">${up ? '📈' : '📉'}</span>
+          <div><div style="font-weight:700;font-size:12px;color:${up ? 'var(--gr)' : 'var(--rd)'};">Your portfolio is ${up ? 'up' : 'down'} ${Math.abs(totalDp).toFixed(2)}% today</div>
+          <div style="font-size:9px;color:var(--mu);margin-top:2px;">${withDP.length} position${withDP.length !== 1 ? 's' : ''} tracked · ${gainers.length} up · ${losers.length} down${withDP.length - gainers.length - losers.length > 0 ? ' · ' + (withDP.length - gainers.length - losers.length) + ' flat' : ''}</div></div>
+        </div>`;
+      }
+
+      if (flat) {
+        html += `<div style="color:var(--mu);font-size:11px;">No significant moves today. Markets may be closed or near open.</div>`;
+      }
+
+      const moverCard = (h, dir) => {
+        const n = newsMap[h.ticker];
+        const col = dir === 'up' ? 'var(--gr)' : 'var(--rd)';
+        const sign = dir === 'up' ? '+' : '';
+        return `<div style="padding:.75rem .9rem;background:var(--s2);border:1px solid var(--b1);border-left:3px solid ${col};border-radius:8px;margin-bottom:.5rem;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:${n ? '.45rem' : '0'};">
+            <span style="font-weight:700;font-size:12px;">${h.ticker}</span>
+            <span style="font-weight:700;font-size:11px;color:${col};">${sign}${h.dp.toFixed(2)}%</span>
+          </div>
+          ${n ? `<a href="${n.link}" target="_blank" rel="noopener" style="text-decoration:none;">
+            <div style="font-size:10px;color:var(--tx);line-height:1.45;">${n.title}</div>
+            <div style="font-size:9px;color:var(--mu);margin-top:.25rem;">${n.publisher} · ${_newsAgo(n.providerPublishTime)}</div>
+          </a>` : '<div style="font-size:10px;color:var(--mu);">No news found.</div>'}
+        </div>`;
+      };
+
+      if (gainers.length) {
+        html += `<div style="font-size:9px;color:var(--gr);text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--sans);margin-bottom:.5rem;">Moving Up</div>`;
+        gainers.forEach(h => { html += moverCard(h, 'up'); });
+      }
+      if (losers.length) {
+        html += `<div style="font-size:9px;color:var(--rd);text-transform:uppercase;letter-spacing:.1em;font-weight:700;font-family:var(--sans);margin-bottom:.5rem;${gainers.length ? 'margin-top:.85rem;' : ''}">Under Pressure</div>`;
+        losers.forEach(h => { html += moverCard(h, 'down'); });
+      }
+
+      wrap.innerHTML = html;
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // STOCK MODAL
     // ═══════════════════════════════════════════════════════════
     function switchMTab(tab, btn) {
@@ -2937,6 +3071,9 @@
         <div class="rng-bar" style="height:8px;border-radius:5px;"><div class="rng-fill" style="width:${p52}%;background:${p52 > 70 ? 'var(--gr)' : p52 < 30 ? 'var(--rd)' : 'var(--gd)'}"></div><div class="rng-dot" style="left:${Math.min(97, Math.max(3, p52))}%;width:12px;height:12px;"></div></div>
         <div style="font-size:9px;color:var(--mu);margin-top:.35rem;">Current ${f(l.price)} · ${p52.toFixed(0)}th percentile of 52W range</div>`;
       }
+      // News (async, non-blocking)
+      document.getElementById('m-news').innerHTML = '<div style="color:var(--mu);font-size:10px;padding:.5rem 0;">Loading news…</div>';
+      renderModalNews(ticker, dp);
       // Position
       if (merged && l) {
         const mv = l.price * merged.totalQty, gl = mv - merged.totalCost, glP = gl / merged.totalCost * 100;
@@ -3091,7 +3228,8 @@
     function renderCash() {
       document.getElementById('cash-disp').textContent = 'SGD ' + Math.round(calcCash()).toLocaleString();
       const ebyCat = {}; S.transactions.filter(t => t.type === 'expense').forEach(t => { ebyCat[t.cat] = (ebyCat[t.cat] || 0) + t.amt; });
-      const cats = Object.keys(ebyCat), vals = cats.map(c => ebyCat[c]), totE = vals.reduce((a, b) => a + b, 0) || 1;
+      const sorted = Object.entries(ebyCat).sort((a, b) => b[1] - a[1]);
+      const cats = sorted.map(e => e[0]), vals = sorted.map(e => e[1]), totE = vals.reduce((a, b) => a + b, 0) || 1;
       const ctx = document.getElementById('c-spend').getContext('2d');
       if (C.spend) C.spend.destroy();
       if (cats.length) {
@@ -3336,7 +3474,15 @@
     }
     async function fbSignIn() {
       if (!db) return;
-      try { await firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider()); } catch (e) { console.warn('Sign-in:', e); }
+      const provider = new firebase.auth.GoogleAuthProvider();
+      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      try {
+        if (isMobile) {
+          await firebase.auth().signInWithRedirect(provider);
+        } else {
+          await firebase.auth().signInWithPopup(provider);
+        }
+      } catch (e) { console.warn('Sign-in:', e); }
     }
     function fbSignOut() {
       if (!db) return;
