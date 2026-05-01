@@ -1682,6 +1682,37 @@
       gap: 1rem;
       flex-wrap: wrap;
     }
+
+    /* ═══ AI ADVISOR ═══ */
+    .ai-msg { display: flex; flex-direction: column; max-width: 85%; }
+    .ai-msg-user { align-self: flex-end; align-items: flex-end; }
+    .ai-msg-assistant { align-self: flex-start; align-items: flex-start; }
+    .ai-bubble {
+      padding: .6rem .9rem;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .ai-msg-user .ai-bubble { background: var(--gr); color: #050505; border-bottom-right-radius: 3px; }
+    .ai-msg-assistant .ai-bubble { background: var(--s2); border: 1px solid var(--b1); color: var(--tx); border-bottom-left-radius: 3px; }
+    .ai-bubble-thinking { background: var(--s2); border: 1px solid var(--b1); color: var(--mu); font-size: 11px; padding: .5rem .9rem; border-radius: 12px; border-bottom-left-radius: 3px; animation: pulse 1.5s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:.5} 50%{opacity:1} }
+    .ai-role { font-size: 9px; color: var(--mu); margin-bottom: 3px; letter-spacing: .06em; text-transform: uppercase; }
+    .ai-chip {
+      background: var(--s2);
+      border: 1px solid var(--b2);
+      color: var(--mu);
+      font-size: 10px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-family: var(--sans);
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .ai-chip:hover { border-color: var(--gr); color: var(--gr); }
   </style>
 </head>
 
@@ -1709,6 +1740,10 @@
       <div class="nav-lbl">Markets</div>
       <div class="nav-item" onclick="go('indexes',this)"><span class="nav-icon">▲</span> Live Indexes</div>
       <div class="nav-item" onclick="go('news',this)"><span class="nav-icon">◉</span> Market News</div>
+    </div>
+    <div class="nav-sec">
+      <div class="nav-lbl">AI</div>
+      <div class="nav-item" onclick="go('advisor',this)"><span class="nav-icon">✦</span> AI Advisor</div>
     </div>
     <div class="sb-footer">
       <div class="mkt-row" id="mkt-status-row"></div>
@@ -2094,6 +2129,49 @@
         <div class="news-grid" id="news-grid"></div>
       </div>
 
+      <div id="page-advisor" class="page">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem;margin-bottom:1rem;">
+          <div>
+            <div style="font-family:var(--sans);font-size:1rem;font-weight:700;">AI Portfolio Advisor</div>
+            <div style="font-size:10px;color:var(--mu);margin-top:2px;">Powered by Gemini · your portfolio is always included as context</div>
+          </div>
+          <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;">
+            <button class="btn" style="font-size:10px;padding:5px 13px;border-color:var(--b2);color:var(--mu);" onclick="aiClearChat()">Clear chat</button>
+            <button class="btn" style="font-size:10px;padding:5px 13px;border-color:var(--b2);color:var(--mu);" onclick="aiShowKeyPrompt()">⚙ API Key</button>
+          </div>
+        </div>
+        <!-- API key setup banner -->
+        <div id="ai-key-banner" style="display:none;background:var(--s2);border:1px solid var(--b2);border-radius:10px;padding:1rem;margin-bottom:1rem;">
+          <div style="font-size:11px;color:var(--tx);margin-bottom:.6rem;font-weight:600;">Enter your Gemini API key to get started (free)</div>
+          <div style="font-size:10px;color:var(--mu);margin-bottom:.75rem;">Get a free key at <strong style="color:var(--tx)">aistudio.google.com</strong> → Get API key. Stored only in your browser, sent only to Google's API.</div>
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+            <input id="ai-key-input" type="password" placeholder="AIza..." style="flex:1;min-width:200px;background:var(--s3);border:1px solid var(--b2);border-radius:6px;padding:7px 10px;color:var(--tx);font-size:11px;font-family:var(--mono);" />
+            <button class="btn btn-gr" style="font-size:10px;padding:6px 14px;" onclick="aiSaveKey()">Save key</button>
+          </div>
+        </div>
+        <!-- Chat window -->
+        <div id="ai-chat-window" style="background:var(--s1);border:1px solid var(--b1);border-radius:12px;display:flex;flex-direction:column;height:calc(100vh - 260px);min-height:300px;">
+          <div id="ai-messages" style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.75rem;">
+            <div class="ai-msg ai-msg-assistant">
+              <div class="ai-bubble">Hi! I have full context of your WealthLens portfolio — your holdings, metals, cash, and net worth history. Ask me anything: portfolio analysis, risk assessment, sector exposure, rebalancing ideas, or market outlook for your specific positions.</div>
+            </div>
+          </div>
+          <!-- Suggested prompts -->
+          <div id="ai-suggestions" style="padding:.6rem 1rem;border-top:1px solid var(--b1);display:flex;gap:.4rem;flex-wrap:wrap;">
+            <button class="ai-chip" onclick="aiSend('Analyse my portfolio and identify key risks')">Analyse risks</button>
+            <button class="ai-chip" onclick="aiSend('How concentrated is my portfolio? Should I diversify?')">Concentration check</button>
+            <button class="ai-chip" onclick="aiSend('Give me a rebalancing plan based on my current allocation')">Rebalancing plan</button>
+            <button class="ai-chip" onclick="aiSend('What is my total exposure to each currency?')">Currency exposure</button>
+            <button class="ai-chip" onclick="aiSend('How are my LSE holdings performing relative to FTSE 100?')">vs FTSE 100</button>
+          </div>
+          <!-- Input row -->
+          <div style="padding:.75rem 1rem;border-top:1px solid var(--b1);display:flex;gap:.5rem;align-items:flex-end;">
+            <textarea id="ai-input" rows="1" placeholder="Ask about your portfolio…" style="flex:1;background:var(--s2);border:1px solid var(--b2);border-radius:8px;padding:8px 12px;color:var(--tx);font-size:12px;font-family:var(--sans);resize:none;line-height:1.5;max-height:120px;overflow-y:auto;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();aiSend();}else{this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px';}"></textarea>
+            <button id="ai-send-btn" class="btn btn-gr" style="padding:8px 16px;font-size:12px;white-space:nowrap;" onclick="aiSend()">Send ↑</button>
+          </div>
+        </div>
+      </div>
+
     </div><!-- /content -->
   </div><!-- /main-area -->
 
@@ -2400,6 +2478,7 @@
       else if (page === 'gold') renderGold();
       else if (page === 'indexes') renderIndexes();
       else if (page === 'news') loadNews();
+      else if (page === 'advisor') { if (!aiGetKey()) aiShowKeyPrompt(); }
       if (window.innerWidth <= 768) closeMobileSidebar();
     }
 
@@ -3762,6 +3841,165 @@
     function toggleSidebar() { const s = document.getElementById('sidebar'), o = document.getElementById('sb-ov'); const open = s.style.transform === 'translateX(0px)' || s.style.transform === 'translateX(0%)'; s.style.transform = open ? 'translateX(-100%)' : 'translateX(0%)'; if (o) o.style.display = open ? 'none' : 'block'; }
     window.addEventListener('resize', () => { const s = document.getElementById('sidebar'), m = document.getElementById('main-area'); if (window.innerWidth > 768) { if (s) s.style.transform = ''; m.style.marginLeft = 'var(--sb)'; const o = document.getElementById('sb-ov'); if (o) o.style.display = 'none'; } else m.style.marginLeft = '0'; });
     initMobile();
+
+    // ═══════════════════════════════════════════════════════════
+    // AI ADVISOR
+    // ═══════════════════════════════════════════════════════════
+    const AI_KEY_STORE = 'wealthlens_gemini_key';
+    let aiHistory = []; // { role, parts: [{text}] } pairs for Gemini API
+
+    function aiGetKey() { return localStorage.getItem(AI_KEY_STORE) || ''; }
+
+    function aiShowKeyPrompt() {
+      const banner = document.getElementById('ai-key-banner');
+      banner.style.display = 'block';
+      const inp = document.getElementById('ai-key-input');
+      inp.value = aiGetKey();
+      inp.focus();
+    }
+
+    function aiSaveKey() {
+      const key = document.getElementById('ai-key-input').value.trim();
+      if (!key) return;
+      localStorage.setItem(AI_KEY_STORE, key);
+      document.getElementById('ai-key-banner').style.display = 'none';
+      aiAppendMsg('assistant', 'Gemini API key saved. Ready to help — ask me anything about your portfolio!');
+    }
+
+    function aiPortfolioContext() {
+      const merged = mergedHoldings();
+      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const tC = merged.reduce((s, h) => s + h.totalCost, 0);
+      const gG = goldGrams(), gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
+      const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
+      const cash = calcCash();
+      const nw = tMV * USD + (gUSD + sUSD) * USD + cash;
+      const gl = tMV - tC, glP = tC ? gl / tC * 100 : 0;
+
+      const holdLines = merged.map(h => {
+        const l = LD[h.ticker];
+        const mv = l ? l.price * h.totalQty : h.totalCost;
+        const hgl = mv - h.totalCost, hglP = h.totalCost ? hgl / h.totalCost * 100 : 0;
+        const dp = l?.prev ? (l.price - l.prev) / l.prev * 100 : null;
+        const exchLabel = h.exchange && h.exchange !== 'US' ? ` (${h.exchange})` : '';
+        return `  - ${h.ticker}${exchLabel} "${h.name}" | Type: ${h.type} | Qty: ${h.totalQty} | Cost: $${h.totalCost.toFixed(2)} | MV: $${mv.toFixed(2)} | G/L: ${hglP >= 0 ? '+' : ''}${hglP.toFixed(1)}%${dp !== null ? ` | Day: ${dp >= 0 ? '+' : ''}${dp.toFixed(2)}%` : ''}`;
+      }).join('\n');
+
+      const histSummary = S.nwHist.length >= 2
+        ? `Net worth history: ${S.nwHist.length} snapshots from ${S.nwHist[0].date} to ${S.nwHist[S.nwHist.length-1].date}. First: SGD ${S.nwHist[0].v.toLocaleString()}, Latest: SGD ${S.nwHist[S.nwHist.length-1].v.toLocaleString()}.`
+        : 'Net worth history: not enough data yet.';
+
+      const spendByCategory = {};
+      S.transactions.filter(t => t.type === 'expense').forEach(t => { spendByCategory[t.cat] = (spendByCategory[t.cat] || 0) + t.amt; });
+      const spendLines = Object.entries(spendByCategory).sort((a,b) => b[1]-a[1]).map(([k,v]) => `  ${k}: SGD ${v.toFixed(0)}`).join('\n');
+
+      return `You are an AI portfolio advisor embedded in WealthLens, a personal investment dashboard. Today is ${new Date().toLocaleDateString('en-SG', {weekday:'long',year:'numeric',month:'long',day:'numeric'})}. USD/SGD rate: ${USD.toFixed(4)}.
+
+PORTFOLIO SUMMARY
+Total market value (stocks/funds): USD ${tMV.toFixed(2)} = SGD ${(tMV*USD).toFixed(0)}
+Gold: ${gG.toFixed(1)}g = USD ${gUSD.toFixed(2)} = SGD ${(gUSD*USD).toFixed(0)}
+Silver: ${tSg.toFixed(1)}g = USD ${sUSD.toFixed(2)} = SGD ${(sUSD*USD).toFixed(0)}
+Cash (SGD): ${fSr(cash)}
+Net Worth (total): SGD ${Math.round(nw).toLocaleString()}
+Total G/L on stocks: ${gl >= 0 ? '+' : ''}USD ${gl.toFixed(2)} (${glP >= 0 ? '+' : ''}${glP.toFixed(1)}%)
+Gold spot: ${goldSpot ? '$' + goldSpot.toFixed(2) + '/oz' : 'unknown'}
+Silver spot: ${silverSpot ? '$' + silverSpot.toFixed(2) + '/oz' : 'unknown'}
+
+HOLDINGS (${merged.length} positions):
+${holdLines || '  No holdings yet.'}
+
+${histSummary}
+
+SPENDING BY CATEGORY:
+${spendLines || '  No spending recorded.'}
+
+Respond concisely and helpfully. Format numbers clearly. Do not give specific buy/sell recommendations, but do provide analysis, context, and educational insights. Acknowledge that you are working with user-provided data that may not be perfectly real-time.`;
+    }
+
+    function aiAppendMsg(role, text) {
+      const msgs = document.getElementById('ai-messages');
+      const isUser = role === 'user';
+      const div = document.createElement('div');
+      div.className = `ai-msg ai-msg-${role}`;
+      div.innerHTML = `<div class="ai-role">${isUser ? 'You' : 'Gemini'}</div><div class="ai-bubble">${text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>')}</div>`;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      return div;
+    }
+
+    function aiAppendThinking() {
+      const msgs = document.getElementById('ai-messages');
+      const div = document.createElement('div');
+      div.className = 'ai-msg ai-msg-assistant';
+      div.innerHTML = '<div class="ai-role">Gemini</div><div class="ai-bubble-thinking">Thinking…</div>';
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      return div;
+    }
+
+    function aiClearChat() {
+      aiHistory = [];
+      document.getElementById('ai-messages').innerHTML = `
+        <div class="ai-msg ai-msg-assistant">
+          <div class="ai-bubble">Chat cleared. I still have your full portfolio context. What would you like to explore?</div>
+        </div>`;
+    }
+
+    async function aiSend(prefill) {
+      const key = aiGetKey();
+      if (!key) { aiShowKeyPrompt(); return; }
+
+      const inputEl = document.getElementById('ai-input');
+      const text = (prefill || inputEl.value).trim();
+      if (!text) return;
+
+      inputEl.value = '';
+      inputEl.style.height = 'auto';
+      document.getElementById('ai-suggestions').style.display = 'none';
+      document.getElementById('ai-send-btn').disabled = true;
+
+      aiAppendMsg('user', text);
+      // Gemini uses role "user"/"model" and parts array
+      aiHistory.push({ role: 'user', parts: [{ text }] });
+
+      const thinkingEl = aiAppendThinking();
+
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: aiPortfolioContext() }] },
+            contents: aiHistory,
+            generationConfig: { maxOutputTokens: 1024 },
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          const msg = err?.error?.message || `API error ${res.status}`;
+          thinkingEl.remove();
+          aiHistory.pop();
+          aiAppendMsg('assistant', `⚠ ${msg}`);
+          if (res.status === 400 || res.status === 403) aiShowKeyPrompt();
+          return;
+        }
+
+        const data = await res.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '(no response)';
+        thinkingEl.remove();
+        aiAppendMsg('assistant', reply);
+        aiHistory.push({ role: 'model', parts: [{ text: reply }] });
+      } catch (e) {
+        thinkingEl.remove();
+        aiHistory.pop();
+        aiAppendMsg('assistant', '⚠ Network error — check your connection and try again.');
+      } finally {
+        document.getElementById('ai-send-btn').disabled = false;
+      }
+    }
 
   </script>
 </body>
