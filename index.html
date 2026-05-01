@@ -2339,7 +2339,8 @@
     }
     function setLogoWithFallback(img, ticker, name) {
       const urls = logoFallbacks(ticker);
-      const prov = etfProviderLogo(name);
+      const resolvedName = name || LD[ticker]?.name || '';
+      const prov = etfProviderLogo(resolvedName);
       if (prov) urls.push(prov);
       let idx = 0;
       img.src = urls[0];
@@ -2605,7 +2606,7 @@
     // ═══════════════════════════════════════════════════════════
     // DASHBOARD
     // ═══════════════════════════════════════════════════════════
-    function renderDash() { renderKpi(); renderNwChart(); renderMovers(); renderAlloc(); renderPortfolioBriefing(); }
+    function renderDash() { renderNwChart(); renderKpi(); renderMovers(); renderAlloc(); renderPortfolioBriefing(); }
 
     function renderKpi() {
       const merged = mergedHoldings();
@@ -2619,7 +2620,11 @@
       const metalsUSD = gUSD + sUSD;
       const cash = calcCash(); const hasLive = Object.keys(LD).length > 0;
       const nw = tMV * USD + metalsUSD * USD + cash;
-      if (hasLive && tMV > 0) saveNwSnap(nw);
+      if (hasLive && tMV > 0) {
+        saveNwSnap(nw);
+        // Override the hero NW value with the live figure (renderNwChart shows snapshot)
+        if (nw > 500) document.getElementById('nw-val').textContent = 'SGD ' + Math.round(nw).toLocaleString();
+      }
       const today = td();
       const prevSnap = [...(S.nwHist || [])].filter(p => p.date < today).pop();
       const dayNWChange = prevSnap ? nw - prevSnap.v : null;
@@ -2667,9 +2672,10 @@
       const merged = mergedHoldings();
       const groups = {};
       merged.forEach(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; groups[h.type] = (groups[h.type] || 0) + v; });
-      const gg = goldGrams(); if (goldSpot && gg > 0) groups['Gold'] = goldSpot / 31.1035 * gg;
+      const gg = goldGrams(), gVal = goldSpot ? goldSpot / 31.1035 * gg : 0;
       const sg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
-      if (silverSpot && sg > 0) groups['Silver'] = silverSpot / 31.1035 * sg;
+      const sVal = silverSpot ? silverSpot / 31.1035 * sg : 0;
+      if (gVal + sVal > 0) groups['Metals'] = gVal + sVal;
       groups['Cash'] = calcCash() / USD;
       const sortedG = Object.entries(groups).sort((a, b) => b[1] - a[1]);
       const labels = sortedG.map(e => e[0]), vals = sortedG.map(e => Math.round(e[1]));
@@ -2700,8 +2706,10 @@
       const merged = mergedHoldings();
       const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
       const gG = goldGrams(), gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
+      const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
       const cash = calcCash();
-      const nw = tMV * USD + gUSD * USD + cash;
+      const nw = tMV * USD + (gUSD + sUSD) * USD + cash;
       if (tMV > 0) saveNwSnap(nw, true);
     }
     function getSlice(days) { if (days >= 9999) return S.nwHist; const cut = new Date(); cut.setDate(cut.getDate() - days); return S.nwHist.filter(p => p.date >= cut.toISOString().split('T')[0]); }
@@ -3404,8 +3412,11 @@
       document.getElementById('idx-status').innerHTML = `NYSE <strong style="color:${nyOpen ? 'var(--gr)' : 'var(--mu)'}">${nyOpen ? 'Open' : 'Closed'}</strong>&nbsp;·&nbsp;SGX <strong style="color:${sgOpen ? 'var(--gr)' : 'var(--mu)'}">${sgOpen ? 'Open' : 'Closed'}</strong>`;
       ['idx-major', 'idx-port', 'idx-comm'].forEach(id => document.getElementById(id).innerHTML = '<div class="ld-txt" style="color:var(--mu);font-size:11px;padding:.5rem;">Fetching</div>');
       document.getElementById('idx-sect').innerHTML = '<div class="ld-txt" style="color:var(--mu);font-size:11px;padding:.5rem;">Fetching</div>';
-      // Build portfolio index list from actual holdings
-      const IDX_P = [...new Set(S.holdings.map(h => h.ticker))].map(t => { const h = S.holdings.find(x => x.ticker === t); return { t, n: h?.name || t }; });
+      // Build portfolio index list from actual holdings, using the correct YF symbol for fetching
+      const IDX_P = [...new Set(S.holdings.map(h => h.ticker))].map(t => {
+        const h = S.holdings.find(x => x.ticker === t);
+        return { t: h ? yfSymbol(h) : t, orig: t, n: h?.name || t };
+      });
       const all = [...IDX_M, ...IDX_P, ...IDX_C, ...IDX_S], uniq = [...new Set(all.map(x => x.t))];
       const res = await Promise.allSettled(uniq.map(t => fetchQ(t).then(q => ({ t, q }))));
       res.forEach(r => { if (r.status === 'fulfilled' && r.value.q) idxQ[r.value.t] = r.value.q; });
@@ -3422,7 +3433,7 @@
         if (!q) return `<div class="idx-card"><div class="ibar" style="background:var(--mu2)"></div><div class="idx-l">${ix.n}</div><div class="idx-pr" style="color:var(--mu);font-size:1.1rem">—</div></div>`;
         const chg = q.price - q.prev, chgP = q.prev ? chg / q.prev * 100 : 0, pos = chg >= 0;
         const pr = q.price, fP = pr < 0.001 ? pr.toFixed(5) : pr < 0.1 ? pr.toFixed(4) : pr < 100 ? pr.toFixed(3) : pr < 10000 ? pr.toFixed(2) : Math.round(pr).toLocaleString();
-        const hold = S.holdings.find(h => h.ticker === ix.t);
+        const hold = S.holdings.find(h => h.ticker === (ix.orig || ix.t) || yfSymbol(h) === ix.t);
         return `<div class="idx-card" style="${hold ? 'border-color:rgba(0,229,160,.2)' : ''}">
       <div class="ibar" style="background:${pos ? 'var(--gr)' : 'var(--rd)'}"></div>
       <div class="idx-l">${ix.n}${hold ? `<span style="color:var(--gr);font-size:8px;margin-left:4px;">● held</span>` : ''}</div>
