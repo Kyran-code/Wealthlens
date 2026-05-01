@@ -2846,40 +2846,76 @@
       C.nw = new Chart(ctx, { type: 'line', data: { labels: labels.map(fL), datasets: [{ data: vals, borderColor: lc, backgroundColor: fc, tension: 0.35, pointRadius: vals.length <= 14 ? 3 : 1, pointBackgroundColor: lc, fill: true, borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 10 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
     }
 
-    function renderComponentChart(canvasId, chartKey, valElId, chgElId, field, color, colorBg) {
-      const sl = getSlice(NWR).filter(p => p[field] != null);
+    function _buildCompChart(canvasId, chartKey, valElId, chgElId, liveVal, histField, color, colorBg, labelPrefix) {
       const ctx = document.getElementById(canvasId).getContext('2d');
-      if (C[chartKey]) C[chartKey].destroy();
-      const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
-      if (!sl.length) {
-        document.getElementById(valElId).textContent = 'SGD —';
-        document.getElementById(chgElId).textContent = 'No history yet';
-        C[chartKey] = new Chart(ctx, { type: 'line', data: { labels: [], datasets: [{ data: [] }] }, options: { responsive: true, maintainAspectRatio: false } });
+      if (C[chartKey]) { C[chartKey].destroy(); C[chartKey] = null; }
+      const today = td();
+      const cutoff = NWR >= 9999 ? null : (() => { const c = new Date(); c.setDate(c.getDate() - NWR); return c.toISOString().split('T')[0]; })();
+      // Historical points (from saved snapshots), exclude today so live value takes precedence
+      const hist = S.nwHist.filter(p => p[histField] != null && p.date !== today && (cutoff === null || p.date >= cutoff));
+      const points = hist.map(p => ({ date: p.date, v: p[histField] }));
+      // Always append today's live computed value if available
+      if (liveVal > 0) points.push({ date: today, v: liveVal });
+      points.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Update header values
+      const valEl = document.getElementById(valElId);
+      const chgEl = document.getElementById(chgElId);
+      valEl.textContent = liveVal > 0 ? 'SGD ' + liveVal.toLocaleString() : 'SGD —';
+
+      if (points.length < 2) {
+        chgEl.textContent = points.length === 1 ? 'Live · open daily to build history' : 'Add holdings to see data';
+        chgEl.style.color = 'var(--mu)';
+        // Draw an empty-looking chart so no artifact appears
+        C[chartKey] = new Chart(ctx, {
+          type: 'line',
+          data: { labels: points.map(p => p.date), datasets: [{ label: labelPrefix, data: points.map(p => p.v), borderColor: color, backgroundColor: colorBg, tension: 0.35, pointRadius: 3, fill: true, borderWidth: 2 }] },
+          options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => 'SGD ' + Math.round(c.parsed.y).toLocaleString() } } }, scales: { x: { display: false }, y: { display: false } } }
+        });
         return;
       }
-      let labels, vals;
-      if (sl.length === 1) {
-        const y = new Date(sl[0].date); y.setDate(y.getDate() - 1);
-        labels = [y.toISOString().split('T')[0], sl[0].date];
-        vals = [sl[0][field], sl[0][field]];
-      } else {
-        labels = sl.map(p => p.date);
-        vals = sl.map(p => p[field]);
-      }
-      const latest = vals[vals.length - 1] || 0, first = vals[0] || 0;
+
+      const fL = d => new Date(d + 'T00:00:00').toLocaleDateString('en-SG', { month: 'short', day: 'numeric' });
+      const labels = points.map(p => fL(p.date)), vals = points.map(p => p.v);
+      const latest = vals[vals.length - 1], first = vals[0];
       const diff = latest - first, diffP = first ? diff / first * 100 : 0, pos = diff >= 0;
-      document.getElementById(valElId).textContent = 'SGD ' + latest.toLocaleString();
-      const chgEl = document.getElementById(chgElId);
       chgEl.textContent = (pos ? '+' : '−') + 'SGD ' + Math.abs(Math.round(diff)).toLocaleString() + ' (' + (pos ? '+' : '') + diffP.toFixed(2) + '%)';
       chgEl.style.color = pos ? 'var(--gr)' : 'var(--rd)';
+
       C[chartKey] = new Chart(ctx, {
         type: 'line',
-        data: { labels: labels.map(fL), datasets: [{ data: vals, borderColor: color, backgroundColor: colorBg, tension: 0.35, pointRadius: vals.length <= 14 ? 2 : 0, pointBackgroundColor: color, fill: true, borderWidth: 2 }] },
-        options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 9 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } }
+        data: { labels, datasets: [{ label: labelPrefix, data: vals, borderColor: color, backgroundColor: colorBg, tension: 0.35, pointRadius: vals.length <= 14 ? 2 : 0, pointBackgroundColor: color, fill: true, borderWidth: 2 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => labelPrefix + ': SGD ' + Math.round(c.parsed.y).toLocaleString() } }
+          },
+          scales: {
+            x: { ticks: { color: '#4a5672', font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: 'rgba(255,255,255,0.03)' } },
+            y: { ticks: { color: '#4a5672', font: { size: 9 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } }
+          }
+        }
       });
     }
-    function renderStocksChart() { renderComponentChart('stocks-c', 'stocks', 'stocks-val', 'stocks-chg', 'stocks', '#4090ff', 'rgba(64,144,255,0.07)'); }
-    function renderMetalsChart() { renderComponentChart('metals-c', 'metals', 'metals-val', 'metals-chg', 'metals', '#ffb740', 'rgba(255,183,64,0.07)'); }
+
+    function renderStocksChart() {
+      const merged = mergedHoldings();
+      // Use live price if available, fall back to cost basis
+      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const liveVal = Math.round(tMV * USD);
+      _buildCompChart('stocks-c', 'stocks', 'stocks-val', 'stocks-chg', liveVal, 'stocks', '#4090ff', 'rgba(64,144,255,0.07)', 'Stocks & Funds');
+    }
+
+    function renderMetalsChart() {
+      const gG = goldGrams();
+      const gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
+      const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
+      const liveVal = Math.round((gUSD + sUSD) * USD);
+      _buildCompChart('metals-c', 'metals', 'metals-val', 'metals-chg', liveVal, 'metals', '#ffb740', 'rgba(255,183,64,0.07)', 'Metals');
+    }
 
     // ═══════════════════════════════════════════════════════════
     // ANALYTICS
@@ -4036,7 +4072,7 @@ Respond concisely and helpfully. Format numbers clearly. Do not give specific bu
       const thinkingEl = aiAppendThinking();
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent?key=${encodeURIComponent(key)}`;
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
