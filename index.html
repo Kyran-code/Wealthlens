@@ -2377,6 +2377,26 @@
     function mstr(d) { return String(d).slice(0, 7); } // safe: dates stored as YYYY-MM-DD
     function goldGrams() { return S.goldEntries.filter(g => g.metal === 'Gold').reduce((s, g) => s + g.mass, 0); }
     function calcCash() { const i = S.transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amt, 0); const e = S.transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amt, 0); return S.cashBase + i - e; }
+    function computeLiveNW() {
+      const merged = mergedHoldings();
+      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const gG = goldGrams(), tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      const metalsUSD = (goldSpot ? goldSpot / 31.1035 * gG : 0) + (silverSpot ? silverSpot / 31.1035 * tSg : 0);
+      return { nw: Math.round(tMV * USD + metalsUSD * USD + calcCash()), stocksSGD: Math.round(tMV * USD), metalsSGD: Math.round(metalsUSD * USD) };
+    }
+    function isMarketOpen() {
+      const now = new Date();
+      const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const sg = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Singapore' }));
+      const lon = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/London' }));
+      const mins = d => d.getHours() * 60 + d.getMinutes(), wd = d => d.getDay();
+      const wk = d => wd(d) >= 1 && wd(d) <= 5;
+      return (wk(ny) && mins(ny) >= 570 && mins(ny) < 960) ||   // NYSE 9:30-16:00
+             (wk(lon) && mins(lon) >= 480 && mins(lon) < 990) || // LSE 8:00-16:30
+             (wk(sg) && mins(sg) >= 540 && mins(sg) < 1020);     // SGX 9:00-17:00
+    }
+    // In-memory intraday NW track — resets each page load, records a point every refresh
+    let intradayNW = [];
     function logoBaseTicker(ticker) {
       return ticker.replace(/\.(L|HK|SI|AX|TO|PA|DE|AS|NZ|OL|ST|CO|HE)$/i, '');
     }
@@ -2648,7 +2668,26 @@
       }
     }
     init();
-    setInterval(async () => { await fetchMeta(); await fetchAllQ(); renderDash(); renderHoldings(); document.getElementById('upd-time').textContent = 'Updated ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }); }, 60000);
+    // Adaptive poll: 15s during market hours, 60s when closed
+    let _pollTimer = null;
+    function schedulePoll() {
+      if (_pollTimer) clearTimeout(_pollTimer);
+      const open = isMarketOpen();
+      _pollTimer = setTimeout(async () => {
+        await fetchMeta(); await fetchAllQ();
+        // Record intraday NW point for live chart
+        const { nw } = computeLiveNW();
+        if (nw > 500) {
+          const t = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: false });
+          intradayNW.push({ t, v: nw });
+          if (intradayNW.length > 600) intradayNW = intradayNW.slice(-600);
+        }
+        renderDash(); renderHoldings();
+        document.getElementById('upd-time').textContent = 'Updated ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }) + (isMarketOpen() ? ' · live' : '');
+        schedulePoll();
+      }, open ? 15000 : 60000);
+    }
+    schedulePoll();
     let _refreshBusy = false;
     async function hardRefresh() {
       if (_refreshBusy) return;
@@ -2780,21 +2819,41 @@
     function getSlice(days) { if (days >= 9999) return S.nwHist; const cut = new Date(); cut.setDate(cut.getDate() - days); return S.nwHist.filter(p => p.date >= cut.toISOString().split('T')[0]); }
     function setRng(days, btn) { NWR = days; document.querySelectorAll('.rb').forEach(b => b.classList.remove('on')); btn.classList.add('on'); renderNwChart(); renderStocksChart(); renderMetalsChart(); }
     function renderNwChart() {
-      let sl = getSlice(NWR), labels, vals;
-      if (!sl.length) { labels = [td()]; vals = [0]; } else if (sl.length === 1) { const y = new Date(sl[0].date); y.setDate(y.getDate() - 1); labels = [y.toISOString().split('T')[0], sl[0].date]; vals = [sl[0].v, sl[0].v]; } else { labels = sl.map(p => p.date); vals = sl.map(p => p.v); }
+      const { nw: liveNW } = computeLiveNW();
+      const todayStr = td();
+      // Use intraday data for 7D view when we have enough points recorded this session
+      const useIntraday = NWR === 7 && intradayNW.length >= 2;
+      let labels, vals;
+      if (useIntraday) {
+        // Show last daily snapshot (yesterday) as anchor, then today's intraday curve
+        const prevSnaps = S.nwHist.filter(p => p.date < todayStr).slice(-3);
+        const snapLabels = prevSnaps.map(p => { const dt = new Date(p.date + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); });
+        const snapVals = prevSnaps.map(p => p.v);
+        labels = [...snapLabels, ...intradayNW.map(p => p.t)];
+        vals = [...snapVals, ...intradayNW.map(p => p.v)];
+      } else {
+        // Daily view — always replace/append today's live value as last point
+        const sl = getSlice(NWR).filter(p => p.date !== todayStr);
+        if (liveNW > 500) sl.push({ date: todayStr, v: liveNW });
+        sl.sort((a, b) => a.date.localeCompare(b.date));
+        const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
+        if (!sl.length) { labels = ['Now']; vals = [liveNW || 0]; }
+        else if (sl.length === 1) { labels = [fL(sl[0].date), 'Now']; vals = [sl[0].v, sl[0].v]; }
+        else { labels = sl.map(p => fL(p.date)); vals = sl.map(p => p.v); }
+      }
       const latest = vals[vals.length - 1] || 0, first = vals[0] || 0, diff = latest - first, diffP = first ? diff / first * 100 : 0, pos = diff >= 0;
-      document.getElementById('nw-val').textContent = 'SGD ' + latest.toLocaleString();
+      // Hero always shows the live computed value, not chart's snapshot
+      if (liveNW > 500) document.getElementById('nw-val').textContent = 'SGD ' + liveNW.toLocaleString();
       const rl = { 7: '7D', 30: '1M', 90: '3M', 180: '6M', 365: '1Y', 9999: 'All' }[NWR] || '';
       const rc = document.getElementById('nw-rc'); rc.textContent = (pos ? '+' : '−') + 'SGD ' + Math.abs(Math.round(diff)).toLocaleString() + ' (' + (pos ? '+' : '') + diffP.toFixed(2) + '%) ' + rl; rc.style.color = pos ? 'var(--gr)' : 'var(--rd)';
       ['7', '30'].forEach(d => { const s = getSlice(+d), el = document.getElementById('nw-' + d + 'd'); if (s.length >= 2) { const c = s[s.length - 1].v - s[0].v, cp = s[0].v ? c / s[0].v * 100 : 0; el.textContent = (c >= 0 ? '+' : '') + cp.toFixed(1) + '% ' + d + 'd'; el.style.color = c >= 0 ? 'var(--gr)' : 'var(--rd)'; } else el.textContent = ''; });
-      const today = S.nwHist.find(p => p.date === td());
-      const todayLabel = today?.t ? ` · today @ ${today.t}` : '';
+      const todaySnap = S.nwHist.find(p => p.date === todayStr);
+      const todayLabel = todaySnap?.t ? ` · today @ ${todaySnap.t}` : '';
       document.getElementById('nw-pts').textContent = S.nwHist.length <= 1 ? 'Open daily to build your net worth history.' : S.nwHist.length + ' snapshots · ' + S.nwHist[0].date + ' → ' + S.nwHist[S.nwHist.length - 1].date + todayLabel;
-      const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
       const lc = pos ? '#00e5a0' : '#ff4545', fc = pos ? 'rgba(0,229,160,0.07)' : 'rgba(255,69,69,0.07)';
       const ctx = document.getElementById('nw-c').getContext('2d');
       if (C.nw) C.nw.destroy();
-      C.nw = new Chart(ctx, { type: 'line', data: { labels: labels.map(fL), datasets: [{ data: vals, borderColor: lc, backgroundColor: fc, tension: 0.35, pointRadius: vals.length <= 14 ? 3 : 1, pointBackgroundColor: lc, fill: true, borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 10 }, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 10 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
+      C.nw = new Chart(ctx, { type: 'line', data: { labels, datasets: [{ data: vals, borderColor: lc, backgroundColor: fc, tension: useIntraday ? 0.2 : 0.35, pointRadius: vals.length <= 30 ? 2 : 0, pointBackgroundColor: lc, fill: true, borderWidth: 2 }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a2338', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#6b7a99', bodyColor: '#e4eaf8', callbacks: { label: c => 'SGD ' + c.parsed.y.toLocaleString() } } }, scales: { x: { ticks: { color: '#4a5672', font: { size: 10 }, maxTicksLimit: useIntraday ? 6 : 8 }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#4a5672', font: { size: 10 }, callback: v => 'SGD ' + Math.round(v / 1000) + 'k' }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
     }
 
     function _buildCompChart(canvasId, chartKey, valElId, chgElId, liveVal, histField, color, colorBg, labelPrefix) {
@@ -3366,23 +3425,36 @@
           return null;
         }
         let imported = 0;
+        const importedDates = [];
         if (rows) {
-          // XLSX path — Money Manager structured format
+          // XLSX path — Money Manager / generic structured format
           for (const row of rows) {
             const keys = Object.keys(row);
             const getCol = (...cands) => { for (const c of cands) { const k = keys.find(k => k.toLowerCase().includes(c.toLowerCase())); if (k) return String(row[k] || '').trim(); } return ''; };
-            const dateKey = keys.find(k => k.toLowerCase().includes('date') || k.toLowerCase().includes('날짜'));
-            const parsedDate = (dateKey && parseCellDate(row[dateKey])) || td();
-            const rawType = getCol('type', 'income/expense', 'in/out').toLowerCase();
-            const rawCat = getCol('category', 'categ');
-            const rawAmt = getCol('amount', 'amt', 'money').replace(/[^0-9.-]/g, '');
-            const rawDesc = getCol('note', 'desc', 'memo', 'detail', 'sub-category', 'subcategory') || rawCat;
+            // Find the date column: prefer named columns, fallback to first column that parses as a date
+            let parsedDate = null;
+            const dateKey = keys.find(k => k.toLowerCase().includes('date') || k.toLowerCase().includes('날짜') ||
+                                           k.toLowerCase().includes('time') || k.toLowerCase() === 'day');
+            if (dateKey) parsedDate = parseCellDate(row[dateKey]);
+            if (!parsedDate) {
+              // Fallback: scan ALL columns for first one that looks like a date
+              for (const k of keys) {
+                const attempt = parseCellDate(row[k]);
+                if (attempt && attempt !== td()) { parsedDate = attempt; break; }
+              }
+            }
+            parsedDate = parsedDate || td();
+            const rawType = getCol('type', 'income/expense', 'in/out', '수입/지출').toLowerCase();
+            const rawCat = getCol('category', 'categ', '카테고리', '분류');
+            const rawAmt = getCol('amount', 'amt', 'money', '금액').replace(/[^0-9.-]/g, '');
+            const rawDesc = getCol('note', 'desc', 'memo', 'detail', 'sub-category', 'subcategory', '메모', '내용') || rawCat;
             const amt = parseFloat(rawAmt);
             if (isNaN(amt) || amt === 0) continue;
             const mappedCat = mmMapCat(rawCat);
             const isIncomeCat = ['NS Pay','Allowance (parents)','Business income','Investment return'].includes(mappedCat);
-            const type = rawType === 'income' || rawType.startsWith('inc') || isIncomeCat ? 'income' : 'expense';
+            const type = rawType.includes('income') || rawType.startsWith('inc') || rawType === '수입' || isIncomeCat ? 'income' : 'expense';
             S.transactions.push({ id: S.nid++, type, cat: mappedCat, desc: rawDesc || mappedCat, amt: Math.abs(amt), date: parsedDate });
+            importedDates.push(parsedDate);
             imported++;
           }
         } else {
@@ -3391,18 +3463,19 @@
           const lines = text.split('\n').map(l => l.trim()).filter(l => l);
           if (!lines.length) { status.textContent = 'File appears empty.'; return; }
           const header = lines[0].toLowerCase().split(/[,;\t]/);
-          const dateIdx = header.findIndex(h => h.includes('date') || h.includes('날짜'));
-          const amtIdx = header.findIndex(h => h.includes('amount') || h.includes('amt') || h.includes('money'));
-          const catIdx = header.findIndex(h => h.includes('categ'));
-          const typeIdx = header.findIndex(h => h === 'type' || h.includes('income/expense') || h.includes('in/out'));
-          const descIdx = header.findIndex(h => h.includes('desc') || h.includes('note') || h.includes('memo') || h.includes('detail') || h.includes('sub'));
+          // Prefer named date column; fallback to column 0
+          let dateIdx = header.findIndex(h => h.includes('date') || h.includes('날짜') || h.includes('time') || h === 'day');
+          if (dateIdx < 0) dateIdx = 0;
+          const amtIdx = header.findIndex(h => h.includes('amount') || h.includes('amt') || h.includes('money') || h.includes('금액'));
+          const catIdx = header.findIndex(h => h.includes('categ') || h.includes('카테고리'));
+          const typeIdx = header.findIndex(h => h === 'type' || h.includes('income/expense') || h.includes('in/out') || h.includes('수입/지출'));
+          const descIdx = header.findIndex(h => h.includes('desc') || h.includes('note') || h.includes('memo') || h.includes('detail') || h.includes('sub') || h.includes('메모'));
           const incomeIdx = header.findIndex(h => h === 'income' || h === 'income amount');
           const expIdx = header.findIndex(h => h === 'expense' || h === 'expense amount' || h.includes('spend'));
           for (let i = 1; i < lines.length; i++) {
             const cols = lines[i].split(/[,;\t]/);
             if (cols.length < 2) continue;
-            const dateRaw = dateIdx >= 0 ? cols[dateIdx]?.trim() : '';
-            const parsedDate = (dateRaw && parseCellDate(dateRaw)) || td();
+            const parsedDate = parseCellDate(cols[dateIdx]?.trim()) || td();
             let amt = 0, type = 'expense';
             if (incomeIdx >= 0 && expIdx >= 0) {
               const inc = parseFloat(cols[incomeIdx]?.replace(/[^0-9.-]/g, '')) || 0;
@@ -3419,12 +3492,21 @@
             const cat = mmMapCat(rawCat);
             const desc = descIdx >= 0 ? cols[descIdx]?.trim() || cat : cat;
             S.transactions.push({ id: S.nid++, type, cat, desc, amt, date: parsedDate });
+            importedDates.push(parsedDate);
             imported++;
           }
         }
         S.transactions.sort((a, b) => b.date.localeCompare(a.date));
+        // Navigate cashMonth to the earliest imported date so user sees their data
+        if (importedDates.length) {
+          importedDates.sort();
+          cashMonth = importedDates[0].slice(0, 7);
+        }
         saveS(); renderCash();
-        status.innerHTML = `<span style="color:var(--gr);">✓ Imported ${imported} transaction${imported !== 1 ? 's' : ''}</span>`;
+        const monthRange = importedDates.length
+          ? ` · ${importedDates[0].slice(0,7)} – ${importedDates[importedDates.length-1].slice(0,7)}`
+          : '';
+        status.innerHTML = `<span style="color:var(--gr);">✓ Imported ${imported} transaction${imported !== 1 ? 's' : ''}${monthRange}</span>`;
       } catch (e) { status.innerHTML = `<span style="color:var(--rd);">Error reading file: ${e.message}</span>`; }
     }
 
