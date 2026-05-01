@@ -1822,10 +1822,18 @@
           <div class="stl">Add / update holding</div>
           <div class="card">
             <div class="fgrid">
-              <div class="fg"><label>Ticker</label><input id="f-tk" placeholder="e.g. NVDA" /></div>
-              <div class="fg"><label>Name</label><input id="f-nm" placeholder="e.g. Nvidia" /></div>
-              <div class="fg"><label>Quantity</label><input id="f-qty" type="number" step="any" min="0" /></div>
-              <div class="fg"><label>Avg cost (USD)</label><input id="f-cost" type="number" step="0.01" min="0" /></div>
+              <div class="fg"><label>Exchange / Market</label><select id="f-exch" onchange="onExchangeChange()">
+                  <option value="US">US (NYSE / NASDAQ)</option>
+                  <option value="LSE">LSE London — ticker e.g. CSPX.L</option>
+                  <option value="HKEx">HKEx Hong Kong — ticker e.g. 0700.HK</option>
+                  <option value="SGX">SGX Singapore — ticker e.g. ES3.SI</option>
+                  <option value="SG_FUND">SG Unit Trust (manual NAV)</option>
+                </select></div>
+              <div class="fg"><label>Ticker / Fund code</label><input id="f-tk" placeholder="e.g. NVDA, CSPX.L" /></div>
+              <div class="fg"><label>Name</label><input id="f-nm" placeholder="e.g. iShares Core S&amp;P 500" /></div>
+              <div class="fg"><label>Quantity / Units</label><input id="f-qty" type="number" step="any" min="0" /></div>
+              <div class="fg" id="f-cost-wrap"><label id="f-cost-lbl">Avg cost (USD)</label><input id="f-cost" type="number" step="0.01" min="0" /></div>
+              <div class="fg" id="f-nav-wrap" style="display:none;"><label>Current NAV (SGD)</label><input id="f-nav" type="number" step="0.001" min="0" placeholder="Latest NAV in SGD" /></div>
               <div class="fg"><label>Type</label><select id="f-type">
                   <option>US Stock</option>
                   <option>ETF</option>
@@ -1840,8 +1848,7 @@
             <button class="refresh-btn" onclick="openBrokerModal()"
               style="margin-left:10px;border-color:rgba(64,144,255,.4);color:#4090ff;background:rgba(64,144,255,.08);">⇪
               Import from IBKR / Moomoo</button>
-            <span class="anote" style="display:inline;margin-left:10px;">Same ticker from different accounts are merged.
-              Click any row for full analysis.</span>
+            <span class="anote" style="display:inline;margin-left:10px;">For SG unit trusts, select "SG Unit Trust" above and enter the avg cost in SGD. Update the NAV periodically.</span>
           </div>
         </div>
         <div class="sec">
@@ -2316,11 +2323,12 @@
     function mergedHoldings() {
       const map = {};
       S.holdings.forEach(h => {
-        if (!map[h.ticker]) { map[h.ticker] = { ticker: h.ticker, name: h.name, type: h.type, totalQty: 0, totalCost: 0, accounts: [] }; }
+        if (!map[h.ticker]) { map[h.ticker] = { ticker: h.ticker, name: h.name, type: h.type, exchange: h.exchange || 'US', manualPrice: h.manualPrice || null, totalQty: 0, totalCost: 0, accounts: [] }; }
         const m = map[h.ticker];
         m.totalQty += h.qty;
         m.totalCost += h.cost * h.qty;
         m.accounts.push({ account: h.account, qty: h.qty, cost: h.cost });
+        if (h.manualPrice) m.manualPrice = h.manualPrice; // update with latest
       });
       return Object.values(map).map(m => ({ ...m, avgCost: m.totalCost / m.totalQty }));
     }
@@ -2486,9 +2494,15 @@
       };
       return FD[ticker];
     }
+    const EXCH_SUFFIX = { LSE: '.L', HKEx: '.HK', SGX: '.SI', ASX: '.AX' };
+    function yfSymbol(h) { return h.ticker + (EXCH_SUFFIX[h.exchange] || ''); }
     async function fetchAllQ() {
-      const tickers = [...new Set(S.holdings.map(h => h.ticker))];
-      const res = await Promise.allSettled(tickers.map(t => fetchQ(t).then(q => [t, q])));
+      // Apply stored manual NAV for SG funds (so LD has a price entry for portfolio totals)
+      S.holdings.filter(h => h.exchange === 'SG_FUND' && h.manualPrice).forEach(h => {
+        if (!LD[h.ticker]) LD[h.ticker] = { price: h.manualPrice / USD, prev: h.manualPrice / USD, hi52: null, lo52: null, name: h.name };
+      });
+      const tickers = [...new Set(S.holdings.filter(h => h.exchange !== 'SG_FUND').map(h => ({ tk: h.ticker, sym: yfSymbol(h) })))];
+      const res = await Promise.allSettled(tickers.map(({ tk, sym }) => fetchQ(sym).then(q => [tk, q])));
       res.forEach(r => { if (r.status === 'fulfilled' && r.value[1]) LD[r.value[0]] = r.value[1]; });
     }
     async function fetchMeta() {
@@ -2780,21 +2794,39 @@
     // ═══════════════════════════════════════════════════════════
     // HOLDINGS — merged across accounts, with sparklines
     // ═══════════════════════════════════════════════════════════
+    function onExchangeChange() {
+      const exch = document.getElementById('f-exch').value;
+      const isFund = exch === 'SG_FUND';
+      document.getElementById('f-nav-wrap').style.display = isFund ? '' : 'none';
+      document.getElementById('f-cost-lbl').textContent = isFund ? 'Avg cost (SGD per unit)' : 'Avg cost (USD)';
+      if (isFund) document.getElementById('f-type').value = 'SG Fund';
+    }
     function addHolding() {
+      const exch = document.getElementById('f-exch').value;
       const tk = document.getElementById('f-tk').value.trim().toUpperCase();
       const nm = document.getElementById('f-nm').value.trim();
       const qty = parseFloat(document.getElementById('f-qty').value);
       const cost = parseFloat(document.getElementById('f-cost').value);
       const type = document.getElementById('f-type').value;
       const acct = document.getElementById('f-acct').value;
+      const isFund = exch === 'SG_FUND';
+      const manualNav = isFund ? parseFloat(document.getElementById('f-nav').value) || null : null;
       if (!tk || !qty || !cost) return;
+      const holding = { ticker: tk, name: nm || tk, qty, cost, type, account: acct, exchange: exch };
+      if (isFund && manualNav) holding.manualPrice = manualNav;
       // Match existing by ticker + account
       const ex = S.holdings.findIndex(h => h.ticker === tk && h.account === acct);
-      if (ex >= 0) S.holdings[ex] = { ...S.holdings[ex], qty, cost, name: nm || S.holdings[ex].name };
-      else S.holdings.push({ ticker: tk, name: nm || tk, qty, cost, type, account: acct });
+      if (ex >= 0) S.holdings[ex] = { ...S.holdings[ex], qty, cost, name: nm || S.holdings[ex].name, exchange: exch, manualPrice: holding.manualPrice };
+      else S.holdings.push(holding);
       saveS();
-      ['f-tk', 'f-nm', 'f-qty', 'f-cost'].forEach(id => document.getElementById(id).value = '');
-      fetchQ(tk).then(q => { if (q) LD[tk] = q; fetchFund(tk).then(() => renderHoldings()); renderHoldings(); renderDash(); });
+      ['f-tk', 'f-nm', 'f-qty', 'f-cost', 'f-nav'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+      if (!isFund) {
+        const sym = yfSymbol({ ticker: tk, exchange: exch });
+        fetchQ(sym).then(q => { if (q) LD[tk] = q; fetchFund(tk).then(() => renderHoldings()); renderHoldings(); renderDash(); });
+      } else {
+        if (manualNav) LD[tk] = { price: manualNav / USD, prev: manualNav / USD, hi52: null, lo52: null, name: nm || tk };
+        renderHoldings(); renderDash();
+      }
     }
     function delTicker(ticker) {
       S.holdings = S.holdings.filter(h => h.ticker !== ticker);
@@ -2831,9 +2863,9 @@
         </div>
       </td>
       <td class="ra">${h.totalQty % 1 === 0 ? h.totalQty : h.totalQty.toFixed(4)}</td>
-      <td class="ra">${f(h.avgCost)}<div style="font-size:9px;color:var(--mu)">SGD ${(h.avgCost * USD).toFixed(2)}</div></td>
-      <td class="ra">${f(h.totalCost, 0)}<div style="font-size:9px;color:var(--mu)">${fS(h.totalCost)}</div></td>
-      <td class="ra"><div class="${p !== null ? (dpos ? 'g' : 'r') : ''}" style="font-weight:600;">${p !== null ? f(p) : 'Loading...'}</div>${p !== null ? `<div style="font-size:9px;color:var(--mu)">SGD ${(p * USD).toFixed(2)}</div>` : ''}</td>
+      <td class="ra">${h.exchange === 'SG_FUND' ? `SGD ${h.avgCost.toFixed(4)}<div style="font-size:9px;color:var(--mu)">≈ USD ${(h.avgCost / USD).toFixed(2)}</div>` : `${f(h.avgCost)}<div style="font-size:9px;color:var(--mu)">SGD ${(h.avgCost * USD).toFixed(2)}</div>`}</td>
+      <td class="ra">${h.exchange === 'SG_FUND' ? `SGD ${h.totalCost.toFixed(2)}<div style="font-size:9px;color:var(--mu)">≈ USD ${(h.totalCost / USD).toFixed(0)}</div>` : `${f(h.totalCost, 0)}<div style="font-size:9px;color:var(--mu)">${fS(h.totalCost)}</div>`}</td>
+      <td class="ra"><div class="${p !== null ? (dpos ? 'g' : 'r') : ''}" style="font-weight:600;">${h.exchange === 'SG_FUND' ? (h.manualPrice ? `SGD ${h.manualPrice.toFixed(4)}` : '<span style="color:var(--mu);font-size:10px;">Set NAV above</span>') : (p !== null ? f(p) : 'Loading...')}</div>${p !== null && h.exchange !== 'SG_FUND' ? `<div style="font-size:9px;color:var(--mu)">SGD ${(p * USD).toFixed(2)}</div>` : ''}</td>
       <td class="ra">${mv !== null ? `<div>${f(mv, 0)}</div><div style="font-size:9px;color:var(--mu)">${fS(mv)}</div>` : '—'}</td>
       <td class="ra"><div class="${pos ? 'g' : 'r'}">${gl !== null ? (gl >= 0 ? '+' : '') + (gl >= 0 ? fS(gl) : '-' + fSr(Math.abs(gl * USD))) : '—'}</div><div class="gl-bar"><div class="gl-f" style="width:${bw}%;background:${pos ? 'var(--gr)' : 'var(--rd)'}"></div></div></td>
       <td class="ra"><span style="font-family:var(--sans);font-size:.95rem;font-weight:800;" class="${glP !== null ? (glP >= 0 ? 'g' : 'r') : ''}">${glP !== null ? pct(glP) : '—'}</span></td>
@@ -2847,8 +2879,9 @@
       merged.forEach(h => { const img = document.getElementById('tbl-logo-' + h.ticker); if (img) { img.src = logoUrl(h.ticker); img.onerror = () => { img.outerHTML = '<div class="stock-logo-fallback">' + h.ticker.slice(0, 2) + '</div>'; } } });
       // Draw table sparklines async
       merged.forEach(async h => {
+        if (h.exchange === 'SG_FUND') return; // no intraday data for unit trusts
         let hist = sparkIntraCache[h.ticker];
-        if (!hist) { hist = await fetchHist(h.ticker, '1d', '5m'); sparkIntraCache[h.ticker] = hist; }
+        if (!hist) { hist = await fetchHist(yfSymbol(h), '1d', '5m'); sparkIntraCache[h.ticker] = hist; }
         if (!hist?.length) return;
         const ctx = document.getElementById('spark-tbl-' + h.ticker)?.getContext('2d');
         if (!ctx) return;
@@ -2887,8 +2920,9 @@
       document.querySelectorAll('.mtab-content').forEach((c, i) => { c.classList.toggle('on', i === 0); });
       document.getElementById('m-sector').textContent = ''; document.getElementById('m-industry').style.display = 'none';
       document.getElementById('m-range').innerHTML = '';
-      // Chart
-      const hist = await fetchHist(ticker, '6mo');
+      // Chart (use Yahoo Finance symbol with exchange suffix if applicable)
+      const _holding = S.holdings.find(h => h.ticker === ticker);
+      const hist = await fetchHist(_holding ? yfSymbol(_holding) : ticker, '6mo');
       const ctx = document.getElementById('m-chart').getContext('2d');
       if (mChart) mChart.destroy();
       if (hist.length >= 2) {
@@ -3435,13 +3469,27 @@
     function parseMoomoo(rows) {
       const results = [];
       for (const row of rows) {
-        const ticker = (_findCol(row, ['Stock Code', 'Symbol', 'Code', 'Ticker', 'symbol']) || '').trim();
-        const qtyRaw = _findCol(row, ['Qty', 'Quantity', 'Shares', 'Held', 'quantity']);
-        const costRaw = _findCol(row, ['Avg Cost', 'Average Cost', 'Cost Price', 'avg cost', 'cost']);
+        const rawTicker = (_findCol(row, ['Stock Code', 'Symbol', 'Code', 'Ticker', 'symbol']) || '').trim();
+        const name = (_findCol(row, ['Stock Name', 'Name', 'company']) || rawTicker).trim();
+        const qtyRaw = _findCol(row, ['Qty', 'Quantity', 'Shares', 'Held', 'quantity', 'Units']);
+        const costRaw = _findCol(row, ['Avg Cost', 'Average Cost', 'Cost Price', 'avg cost', 'cost', 'Avg. Cost']);
         const qty = parseFloat(String(qtyRaw).replace(/[^0-9.-]/g, ''));
         const cost = parseFloat(String(costRaw).replace(/[^0-9.-]/g, ''));
-        if (!ticker || isNaN(qty) || qty <= 0 || isNaN(cost) || cost <= 0) continue;
-        results.push({ ticker, name: _findCol(row, ['Stock Name', 'Name', 'company']) || ticker, qty, cost, type: 'US Stock', account: 'Moomoo' });
+        if (isNaN(qty) || qty <= 0 || isNaN(cost) || cost <= 0) continue;
+        // Detect exchange from ticker suffix or name
+        let ticker = rawTicker.toUpperCase();
+        let exchange = 'US';
+        let type = 'US Stock';
+        if (ticker.endsWith('.L') || ticker.endsWith(' LN')) { exchange = 'LSE'; type = 'ETF'; ticker = ticker.replace(/\.L$| LN$/, '') + '.L'; }
+        else if (ticker.endsWith('.HK') || /^\d{4,5}$/.test(ticker)) { exchange = 'HKEx'; type = 'US Stock'; ticker = ticker.replace(/\.HK$/, '') + '.HK'; }
+        else if (ticker.endsWith('.SI')) { exchange = 'SGX'; type = 'US Stock'; ticker = ticker.replace(/\.SI$/, '') + '.SI'; }
+        else if (!ticker || ticker.length > 12 || /fund|sgd|acc|inc|cls/i.test(name)) {
+          // Likely a SG unit trust — use name as ticker key, mark as SG Fund
+          ticker = ticker || name.replace(/\s+/g, '_').slice(0, 12).toUpperCase();
+          exchange = 'SG_FUND'; type = 'SG Fund';
+        } else if (ticker.match(/^(SPY|QQQ|VTI|VOO|VEA|VWO|IWM|GLD|SLV|XL[A-Z]|ARK[A-Z]|CSPX|VWRA|IWDA)/i)) type = 'ETF';
+        if (!ticker) continue;
+        results.push({ ticker, name, qty, cost, type, account: 'Moomoo', exchange });
       }
       return results;
     }
@@ -3485,8 +3533,7 @@
         else S.holdings.push(h);
       }
       saveS();
-      const newTickers = _pendingBrokerHoldings.map(h => h.ticker);
-      Promise.all(newTickers.map(t => fetchQ(t).then(q => { if (q) LD[t] = q; }))).then(() => renderHoldings());
+      Promise.all(_pendingBrokerHoldings.map(h => fetchQ(yfSymbol(h)).then(q => { if (q) LD[h.ticker] = q; }))).then(() => renderHoldings());
       renderDash();
       closeBrokerModal();
     }
