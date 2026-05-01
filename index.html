@@ -131,6 +131,7 @@
     /* ═══ SIDEBAR ═══ */
     .logo {
       padding: 1.2rem 1.4rem;
+      padding-top: calc(1.2rem + env(safe-area-inset-top));
       border-bottom: 1px solid var(--b1);
     }
 
@@ -1753,12 +1754,11 @@
                 <button class="rb" onclick="setRng(365,this)">1Y</button>
                 <button class="rb" onclick="setRng(9999,this)">All</button>
               </div>
-              <div style="font-size:9px;color:var(--mu);">Opens daily → auto-saves snapshot</div>
+              <div style="font-size:9px;color:var(--mu);">Auto-saves once on first open each day</div>
             </div>
           </div>
           <div class="nw-cw"><canvas id="nw-c"></canvas></div>
-          <div class="nw-ft"><span id="nw-pts">Open daily to build your net worth history.</span><span id="nw-sv"
-              style="color:var(--gr)"></span></div>
+          <div class="nw-ft"><span id="nw-pts">Open daily to build your net worth history.</span><span id="nw-sv" style="color:var(--gr)"></span><button onclick="manualSnap()" style="margin-left:auto;background:none;border:1px solid var(--b2);color:var(--mu);font-size:9px;padding:3px 8px;border-radius:5px;cursor:pointer;font-family:var(--mono);">📸 Save now</button></div>
         </div>
         <div class="kpi-row" id="kpi-strip"></div>
         <div class="dash-grid">
@@ -2654,7 +2654,25 @@
     // ═══════════════════════════════════════════════════════════
     // NW CHART
     // ═══════════════════════════════════════════════════════════
-    function saveNwSnap(v) { const k = td(), i = S.nwHist.findIndex(p => p.date === k); if (i >= 0) S.nwHist[i].v = Math.round(v); else S.nwHist.push({ date: k, v: Math.round(v) }); S.nwHist.sort((a, b) => a.date.localeCompare(b.date)); saveS(); document.getElementById('nw-sv').textContent = 'Saved ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' }); }
+    function saveNwSnap(v, force = false) {
+      const k = td();
+      const i = S.nwHist.findIndex(p => p.date === k);
+      if (i >= 0 && !force) return; // already saved today — only overwrite if user explicitly requests
+      const time = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
+      const entry = { date: k, v: Math.round(v), t: time };
+      if (i >= 0) S.nwHist[i] = entry; else S.nwHist.push(entry);
+      S.nwHist.sort((a, b) => a.date.localeCompare(b.date));
+      saveS();
+      document.getElementById('nw-sv').textContent = 'Snapshot saved at ' + time;
+    }
+    function manualSnap() {
+      const merged = mergedHoldings();
+      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const gG = goldGrams(), gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
+      const cash = calcCash();
+      const nw = tMV * USD + gUSD * USD + cash;
+      if (tMV > 0) saveNwSnap(nw, true);
+    }
     function getSlice(days) { if (days >= 9999) return S.nwHist; const cut = new Date(); cut.setDate(cut.getDate() - days); return S.nwHist.filter(p => p.date >= cut.toISOString().split('T')[0]); }
     function setRng(days, btn) { NWR = days; document.querySelectorAll('.rb').forEach(b => b.classList.remove('on')); btn.classList.add('on'); renderNwChart(); }
     function renderNwChart() {
@@ -2665,7 +2683,9 @@
       const rl = { 7: '7D', 30: '1M', 90: '3M', 180: '6M', 365: '1Y', 9999: 'All' }[NWR] || '';
       const rc = document.getElementById('nw-rc'); rc.textContent = (pos ? '+' : '−') + 'SGD ' + Math.abs(Math.round(diff)).toLocaleString() + ' (' + (pos ? '+' : '') + diffP.toFixed(2) + '%) ' + rl; rc.style.color = pos ? 'var(--gr)' : 'var(--rd)';
       ['7', '30'].forEach(d => { const s = getSlice(+d), el = document.getElementById('nw-' + d + 'd'); if (s.length >= 2) { const c = s[s.length - 1].v - s[0].v, cp = s[0].v ? c / s[0].v * 100 : 0; el.textContent = (c >= 0 ? '+' : '') + cp.toFixed(1) + '% ' + d + 'd'; el.style.color = c >= 0 ? 'var(--gr)' : 'var(--rd)'; } else el.textContent = ''; });
-      document.getElementById('nw-pts').textContent = S.nwHist.length <= 1 ? 'Open daily to build your net worth history.' : S.nwHist.length + ' snapshots · ' + S.nwHist[0].date + ' → ' + S.nwHist[S.nwHist.length - 1].date;
+      const today = S.nwHist.find(p => p.date === td());
+      const todayLabel = today?.t ? ` · today @ ${today.t}` : '';
+      document.getElementById('nw-pts').textContent = S.nwHist.length <= 1 ? 'Open daily to build your net worth history.' : S.nwHist.length + ' snapshots · ' + S.nwHist[0].date + ' → ' + S.nwHist[S.nwHist.length - 1].date + todayLabel;
       const fL = d => { const dt = new Date(d + 'T00:00:00'); return dt.toLocaleDateString('en-SG', { month: 'short', day: 'numeric' }); };
       const lc = pos ? '#00e5a0' : '#ff4545', fc = pos ? 'rgba(0,229,160,0.07)' : 'rgba(255,69,69,0.07)';
       const ctx = document.getElementById('nw-c').getContext('2d');
