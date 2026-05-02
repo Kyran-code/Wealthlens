@@ -3120,11 +3120,15 @@
       body.innerHTML = merged.map((h) => {
         const l = LD[h.ticker], fd = FD[h.ticker];
         const p = l?.price ?? null, pv = l?.prev ?? null, hi52 = l?.hi52, lo52 = l?.lo52;
+        const isFund = h.exchange === 'SG_FUND';
         const mv = p !== null ? p * h.totalQty : null;
-        const gl = mv !== null ? mv - h.totalCost : null;
-        const glP = gl !== null && h.totalCost ? gl / h.totalCost * 100 : null;
+        // glSGD: gain/loss always in SGD — for SG funds both NAV and cost are SGD; for others convert USD
+        const mvSGD = isFund ? (h.manualPrice ? h.manualPrice * h.totalQty : null) : (mv !== null ? mv * USD : null);
+        const costSGD = isFund ? h.totalCost : h.totalCost * USD;
+        const glSGD = mvSGD !== null ? mvSGD - costSGD : null;
+        const glP = glSGD !== null && costSGD ? glSGD / costSGD * 100 : null;
         const dayP = p !== null && pv !== null ? (p - pv) / pv * 100 : null;
-        const pos = gl !== null && gl >= 0, dpos = dayP !== null && dayP >= 0;
+        const pos = glSGD !== null && glSGD >= 0, dpos = dayP !== null && dayP >= 0;
         const bw = glP !== null ? Math.min(100, Math.abs(glP) * 3) : 0;
         const badge = h.type === 'ETF' ? 'be' : h.type === 'SG Fund' ? 'bs' : 'bu';
         let anHtml = '<span style="color:var(--mu);font-size:9px;">—</span>';
@@ -3144,8 +3148,8 @@
       <td class="ra">${h.exchange === 'SG_FUND' ? `SGD ${h.avgCost.toFixed(4)}<div style="font-size:9px;color:var(--mu)">≈ USD ${(h.avgCost / USD).toFixed(2)}</div>` : `${f(h.avgCost)}<div style="font-size:9px;color:var(--mu)">SGD ${(h.avgCost * USD).toFixed(2)}</div>`}</td>
       <td class="ra">${h.exchange === 'SG_FUND' ? `SGD ${h.totalCost.toFixed(2)}<div style="font-size:9px;color:var(--mu)">≈ USD ${(h.totalCost / USD).toFixed(0)}</div>` : `${f(h.totalCost, 0)}<div style="font-size:9px;color:var(--mu)">${fS(h.totalCost)}</div>`}</td>
       <td class="ra"><div class="${p !== null ? (dpos ? 'g' : 'r') : ''}" style="font-weight:600;">${h.exchange === 'SG_FUND' ? (h.manualPrice ? `SGD ${h.manualPrice.toFixed(4)}` : '<span style="color:var(--mu);font-size:10px;">Set NAV above</span>') : (p !== null ? f(p) : 'Loading...')}</div>${p !== null && h.exchange !== 'SG_FUND' ? `<div style="font-size:9px;color:var(--mu)">SGD ${(p * USD).toFixed(2)}</div>` : ''}</td>
-      <td class="ra">${mv !== null ? `<div>${f(mv, 0)}</div><div style="font-size:9px;color:var(--mu)">${fS(mv)}</div>` : '—'}</td>
-      <td class="ra"><div class="${pos ? 'g' : 'r'}">${gl !== null ? (gl >= 0 ? '+' : '') + (gl >= 0 ? fS(gl) : '-' + fSr(Math.abs(gl * USD))) : '—'}</div><div class="gl-bar"><div class="gl-f" style="width:${bw}%;background:${pos ? 'var(--gr)' : 'var(--rd)'}"></div></div></td>
+      <td class="ra">${isFund ? (mvSGD !== null ? `<div>SGD ${Math.round(mvSGD).toLocaleString()}</div><div style="font-size:9px;color:var(--mu)">≈ USD ${Math.round(mvSGD / USD).toLocaleString()}</div>` : '—') : (mv !== null ? `<div>${f(mv, 0)}</div><div style="font-size:9px;color:var(--mu)">${fS(mv)}</div>` : '—')}</td>
+      <td class="ra"><div class="${pos ? 'g' : 'r'}">${glSGD !== null ? (glSGD >= 0 ? '+' : '-') + 'SGD ' + Math.abs(Math.round(glSGD)).toLocaleString() : '—'}</div><div class="gl-bar"><div class="gl-f" style="width:${bw}%;background:${pos ? 'var(--gr)' : 'var(--rd)'}"></div></div></td>
       <td class="ra"><span style="font-family:var(--sans);font-size:.95rem;font-weight:800;" class="${glP !== null ? (glP >= 0 ? 'g' : 'r') : ''}">${glP !== null ? pct(glP) : '—'}</span></td>
       <td class="ra" style="font-weight:700;"><span class="${dpos ? 'g' : 'r'}">${dayP !== null ? pct(dayP) : '—'}</span></td>
       <td>${rngHtml}</td>
