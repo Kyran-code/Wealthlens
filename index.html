@@ -2340,6 +2340,7 @@
     let C = { nw: null, stocks: null, metals: null, alloc: null, spend: null, flow: null, bench: null, sector: null, goldAlloc: null, goldSpotChart: null, silverSpotChart: null };
     let mChart = null;
     let idxQ = {}, idxBusy = false, spxCache = null;
+    let _stocksHistPts = {}, _metalsHistPts = {}; // keyed by range string, cleared on hard refresh
     let deferredPrompt = null;
     const PROXIES = [
       u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
@@ -2506,7 +2507,10 @@
     async function fetchQ(ticker) {
       const r = await yfGet(ticker, '2d', '1d');
       if (!r) return null;
-      const m = r.meta, prev = m.chartPreviousClose || m.regularMarketPreviousClose || m.regularMarketPrice;
+      const m = r.meta;
+      // Use first candle's close as previous day's close — meta.chartPreviousClose can be stale
+      const closes = (r.indicators?.quote?.[0]?.close || []).filter(v => v != null);
+      const prev = closes.length > 0 ? closes[0] : (m.chartPreviousClose || m.regularMarketPreviousClose || m.regularMarketPrice);
       return { price: m.regularMarketPrice, prev, hi52: m.fiftyTwoWeekHigh, lo52: m.fiftyTwoWeekLow, name: m.longName || m.shortName || ticker };
     }
     async function fetchHist(ticker, range = '3mo', interval = '1d') {
@@ -2692,7 +2696,7 @@
       const btn = document.getElementById('refresh-btn');
       if (btn) { btn.disabled = true; btn.textContent = '↻ ...'; }
       document.getElementById('upd-time').textContent = 'Refreshing...';
-      FD = {}; spxCache = null; sparkCache = {}; sparkIntraCache = {};
+      FD = {}; spxCache = null; sparkCache = {}; sparkIntraCache = {}; _stocksHistPts = {}; _metalsHistPts = {};
       // renderIndexes fetches all prices (works via chart API) and syncs to LD
       await renderIndexes();
       S.holdings.forEach(h => fetchFund(h.ticker).then(() => renderHoldings()));
@@ -2895,21 +2899,74 @@
       });
     }
 
-    function renderStocksChart() {
+    async function renderStocksChart() {
       const merged = mergedHoldings();
-      // Use live price if available, fall back to cost basis
       const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
       const liveVal = Math.round(tMV * USD);
-      _buildCompChart('stocks-c', 'stocks', 'stocks-val', 'stocks-chg', liveVal, 'stocks', '#4090ff', 'rgba(64,144,255,0.07)', 'Stocks & Funds');
+      const range = NWR >= 365 ? '1y' : NWR >= 180 ? '6mo' : NWR >= 90 ? '3mo' : '6mo';
+      // Build historical portfolio value from actual price history (cached per range)
+      if (!_stocksHistPts[range]) {
+        const held = merged.filter(h => h.exchange !== 'SG_FUND' && h.totalQty > 0);
+        if (held.length) {
+          const results = await Promise.allSettled(held.map(h => fetchHist(yfSymbol(h), range).then(d => ({ h, d }))));
+          const dm = {};
+          results.forEach(r => { if (r.status !== 'fulfilled') return; const { h, d } = r.value; d.forEach(p => { if (p.y) dm[p.x] = (dm[p.x] || 0) + p.y * h.totalQty; }); });
+          _stocksHistPts[range] = Object.entries(dm).sort(([a],[b]) => a.localeCompare(b)).map(([date, uv]) => ({ date, v: Math.round(uv * USD) }));
+        }
+      }
+      const todayStr = td();
+      const fL = d => new Date(d + 'T00:00:00').toLocaleDateString('en-SG', { month: 'short', day: 'numeric' });
+      const pts = [
+        ...(_stocksHistPts[range] || []).filter(p => p.date !== todayStr),
+        ...(liveVal > 0 ? [{ date: todayStr, v: liveVal }] : [])
+      ];
+      const valEl = document.getElementById('stocks-val'), chgEl = document.getElementById('stocks-chg');
+      valEl.textContent = liveVal > 0 ? 'SGD ' + liveVal.toLocaleString() : 'SGD —';
+      const ctx = document.getElementById('stocks-c')?.getContext('2d');
+      if (!ctx) return;
+      if (C.stocks) { C.stocks.destroy(); C.stocks = null; }
+      if (pts.length < 2) { chgEl.textContent = liveVal > 0 ? 'Loading history…' : 'Add holdings'; chgEl.style.color = 'var(--mu)'; return; }
+      const labels = pts.map(p => fL(p.date)), vals = pts.map(p => p.v);
+      const diff = vals[vals.length-1] - vals[0], diffP = vals[0] ? diff/vals[0]*100 : 0, pos = diff >= 0;
+      chgEl.textContent = (pos?'+':'−')+'SGD '+Math.abs(Math.round(diff)).toLocaleString()+' ('+(pos?'+':'')+diffP.toFixed(2)+'%)';
+      chgEl.style.color = pos ? 'var(--gr)' : 'var(--rd)';
+      C.stocks = new Chart(ctx, { type:'line', data:{ labels, datasets:[{ label:'Stocks & Funds', data:vals, borderColor:'#4090ff', backgroundColor:'rgba(64,144,255,0.07)', tension:0.35, pointRadius:vals.length<=14?2:0, fill:true, borderWidth:2 }] }, options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1a2338',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,titleColor:'#6b7a99',bodyColor:'#e4eaf8',callbacks:{label:c=>'SGD '+Math.round(c.parsed.y).toLocaleString()}} }, scales:{ x:{ticks:{color:'#4a5672',font:{size:10},maxTicksLimit:8},grid:{color:'rgba(255,255,255,0.03)'}}, y:{ticks:{color:'#4a5672',font:{size:10},callback:v=>'SGD '+Math.round(v/1000)+'k'},grid:{color:'rgba(255,255,255,0.03)'}} } } });
     }
 
-    function renderMetalsChart() {
+    async function renderMetalsChart() {
       const gG = goldGrams();
-      const gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
       const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
+      const gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
       const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
       const liveVal = Math.round((gUSD + sUSD) * USD);
-      _buildCompChart('metals-c', 'metals', 'metals-val', 'metals-chg', liveVal, 'metals', '#ffb740', 'rgba(255,183,64,0.07)', 'Metals');
+      const range = NWR >= 365 ? '1y' : NWR >= 180 ? '6mo' : NWR >= 90 ? '3mo' : '6mo';
+      if (!_metalsHistPts[range] && (gG > 0 || tSg > 0)) {
+        const [gHist, sHist] = await Promise.all([
+          gG > 0 ? fetchHist('GC=F', range) : Promise.resolve([]),
+          tSg > 0 ? fetchHist('SI=F', range) : Promise.resolve([])
+        ]);
+        const dm = {};
+        gHist.forEach(p => { if (p.y) dm[p.x] = (dm[p.x] || 0) + p.y / 31.1035 * gG; });
+        sHist.forEach(p => { if (p.y) dm[p.x] = (dm[p.x] || 0) + p.y / 31.1035 * tSg; });
+        _metalsHistPts[range] = Object.entries(dm).sort(([a],[b]) => a.localeCompare(b)).map(([date, uv]) => ({ date, v: Math.round(uv * USD) }));
+      }
+      const todayStr = td();
+      const fL = d => new Date(d + 'T00:00:00').toLocaleDateString('en-SG', { month: 'short', day: 'numeric' });
+      const pts = [
+        ...(_metalsHistPts[range] || []).filter(p => p.date !== todayStr),
+        ...(liveVal > 0 ? [{ date: todayStr, v: liveVal }] : [])
+      ];
+      const valEl = document.getElementById('metals-val'), chgEl = document.getElementById('metals-chg');
+      valEl.textContent = liveVal > 0 ? 'SGD ' + liveVal.toLocaleString() : 'SGD —';
+      const ctx = document.getElementById('metals-c')?.getContext('2d');
+      if (!ctx) return;
+      if (C.metals) { C.metals.destroy(); C.metals = null; }
+      if (pts.length < 2) { chgEl.textContent = liveVal > 0 ? 'Loading history…' : 'Add metals'; chgEl.style.color = 'var(--mu)'; return; }
+      const labels = pts.map(p => fL(p.date)), vals = pts.map(p => p.v);
+      const diff = vals[vals.length-1] - vals[0], diffP = vals[0] ? diff/vals[0]*100 : 0, pos = diff >= 0;
+      chgEl.textContent = (pos?'+':'−')+'SGD '+Math.abs(Math.round(diff)).toLocaleString()+' ('+(pos?'+':'')+diffP.toFixed(2)+'%)';
+      chgEl.style.color = pos ? 'var(--gr)' : 'var(--rd)';
+      C.metals = new Chart(ctx, { type:'line', data:{ labels, datasets:[{ label:'Metals', data:vals, borderColor:'#ffb740', backgroundColor:'rgba(255,183,64,0.07)', tension:0.35, pointRadius:vals.length<=14?2:0, fill:true, borderWidth:2 }] }, options:{ responsive:true, maintainAspectRatio:false, interaction:{mode:'index',intersect:false}, plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1a2338',borderColor:'rgba(255,255,255,0.1)',borderWidth:1,titleColor:'#6b7a99',bodyColor:'#e4eaf8',callbacks:{label:c=>'SGD '+Math.round(c.parsed.y).toLocaleString()}} }, scales:{ x:{ticks:{color:'#4a5672',font:{size:10},maxTicksLimit:8},grid:{color:'rgba(255,255,255,0.03)'}}, y:{ticks:{color:'#4a5672',font:{size:10},callback:v=>'SGD '+Math.round(v/1000)+'k'},grid:{color:'rgba(255,255,255,0.03)'}} } } });
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -3150,6 +3207,21 @@
       <td><button class="del-btn" onclick="event.stopPropagation();delTicker('${h.ticker}')">✕</button></td>
     </tr>`;
       }).join('');
+      // Total row — sums live market values across all holdings
+      const totalUSD = merged.reduce((s,h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : 0); }, 0);
+      const totalSGD = Math.round(totalUSD * USD);
+      const totalCostUSD = merged.reduce((s,h) => s + h.totalCost, 0);
+      const totalGL = totalUSD - totalCostUSD, totalGLP = totalCostUSD ? totalGL/totalCostUSD*100 : 0, glPos = totalGL >= 0;
+      body.innerHTML += `<tr style="border-top:2px solid var(--b2);background:rgba(255,255,255,0.025);">
+        <td></td><td style="font-weight:700;font-size:10px;color:var(--mu);letter-spacing:.04em;">TOTAL</td>
+        <td></td><td></td>
+        <td class="ra" style="font-size:10px;color:var(--mu)">${fSr(totalCostUSD * USD)}</td>
+        <td></td>
+        <td class="ra"><div style="font-weight:700;">${totalUSD > 0 ? f(totalUSD, 0) : '—'}</div><div style="font-size:9px;color:var(--mu)">${totalSGD > 0 ? 'SGD '+totalSGD.toLocaleString() : ''}</div></td>
+        <td class="ra"><div class="${glPos?'g':'r'}" style="font-weight:700;">${totalUSD > 0 ? (glPos?'+':'')+'SGD '+Math.abs(Math.round(totalGL*USD)).toLocaleString() : '—'}</div></td>
+        <td class="ra"><span style="font-weight:800;" class="${glPos?'g':'r'}">${totalUSD > 0 ? pct(totalGLP) : '—'}</span></td>
+        <td></td><td></td><td></td>
+      </tr>`;
       if (hasLive) document.getElementById('h-upd').textContent = 'Live · ' + new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
       // Set table logos with fallback
       merged.forEach(h => { const img = document.getElementById('tbl-logo-' + h.ticker); if (img) setLogoWithFallback(img, h.ticker, h.name); });
