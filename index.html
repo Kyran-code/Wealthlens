@@ -3697,7 +3697,7 @@
           }
         });
       }
-      const [gHist, sHist] = await Promise.all([fetchHist('GC=F', '6mo'), fetchHist('SI=F', '6mo')]);
+      const [gHist, sHist] = await Promise.all([fetchHist('GC=F', '1mo'), fetchHist('SI=F', '6mo')]);
       buildSpotChart('c-gold-spot', 'goldSpotChart', gHist, '#ffb740', 'rgba(255,183,64,0.07)');
       buildSpotChart('c-silver-spot', 'silverSpotChart', sHist, '#c0c0c0', 'rgba(192,192,192,0.07)');
     }
