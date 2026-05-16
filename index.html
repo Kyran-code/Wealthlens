@@ -1734,6 +1734,7 @@
           <div class="live-dot"></div><span id="upd-time">Loading...</span>
         </div>
         <button class="refresh-btn" id="refresh-btn" onclick="hardRefresh()">↺ Refresh</button>
+        <div id="sync-status" style="font-size:9px;color:var(--mu2);font-family:var(--mono);white-space:nowrap;display:none;"></div>
         <div id="auth-btn"></div>
       </div>
     </div>
@@ -2362,10 +2363,22 @@
     // HELPERS
     // ═══════════════════════════════════════════════════════════
     function lS() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || JSON.parse(localStorage.getItem('wl1')) || null; } catch { return null; } }
+    let _lastLocalSave = 0;
+    function setSyncStatus(text, color) {
+      const el = document.getElementById('sync-status');
+      if (!el) return;
+      el.style.display = text ? '' : 'none';
+      el.textContent = text;
+      el.style.color = color || 'var(--mu2)';
+    }
     function saveS() {
       localStorage.setItem(STORE_KEY, JSON.stringify(S));
       if (db && currentUser) {
-        db.collection('users').doc(currentUser.uid).collection('data').doc('state').set(S).catch(() => { });
+        _lastLocalSave = Date.now();
+        setSyncStatus('saving…');
+        db.collection('users').doc(currentUser.uid).collection('data').doc('state').set(S)
+          .then(() => setSyncStatus('synced ✓', 'var(--gr)'))
+          .catch(() => setSyncStatus('sync failed', 'var(--rd)'));
       }
     }
     function td() { return new Date().toISOString().split('T')[0]; }
@@ -3867,23 +3880,31 @@
         }
       } catch (e) { console.warn('Sign-in:', e); }
     }
+    let _firestoreUnsub = null;
     function fbSignOut() {
       if (!db) return;
-      firebase.auth().signOut().then(() => { currentUser = null; updateAuthUI(); });
+      if (_firestoreUnsub) { _firestoreUnsub(); _firestoreUnsub = null; }
+      firebase.auth().signOut().then(() => { currentUser = null; setSyncStatus(''); updateAuthUI(); });
     }
-    async function loadFromFirestore(uid) {
+    function loadFromFirestore(uid) {
       if (!db) return;
-      try {
-        const doc = await db.collection('users').doc(uid).collection('data').doc('state').get();
+      if (_firestoreUnsub) { _firestoreUnsub(); _firestoreUnsub = null; }
+      setSyncStatus('connecting…');
+      const ref = db.collection('users').doc(uid).collection('data').doc('state');
+      _firestoreUnsub = ref.onSnapshot(doc => {
+        // Skip if this snapshot was triggered by our own recent save (< 3s ago)
+        if (Date.now() - _lastLocalSave < 3000) return;
         if (doc.exists) {
-          const remote = doc.data();
-          Object.assign(S, remote);
+          Object.assign(S, doc.data());
           localStorage.setItem(STORE_KEY, JSON.stringify(S));
+          renderDash(); renderHoldings(); renderCash(); renderGold(); renderNwChart();
+          setSyncStatus('synced ✓', 'var(--gr)');
         } else {
-          await db.collection('users').doc(uid).collection('data').doc('state').set(S);
+          // No cloud data yet — push local state up
+          ref.set(S).catch(() => {});
+          setSyncStatus('synced ✓', 'var(--gr)');
         }
-        renderDash(); renderHoldings(); renderCash(); renderGold(); renderNwChart();
-      } catch (e) { console.warn('Firestore load:', e); }
+      }, err => { console.warn('Firestore listener:', err); setSyncStatus('sync error', 'var(--rd)'); });
     }
 
     // ═══════════════════════════════════════════════════════════
