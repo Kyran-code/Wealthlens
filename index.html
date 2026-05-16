@@ -2681,7 +2681,7 @@
       updateAuthUI();
       if (db) {
         // Handle redirect result from mobile sign-in
-        firebase.auth().getRedirectResult().catch(() => {});
+        firebase.auth().getRedirectResult().catch(e => { if (e.code) setSyncStatus('sign-in error: ' + e.code, 'var(--rd)'); });
         firebase.auth().onAuthStateChanged(async user => {
           currentUser = user;
           updateAuthUI();
@@ -3871,14 +3871,24 @@
     async function fbSignIn() {
       if (!db) return;
       const provider = new firebase.auth.GoogleAuthProvider();
-      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      setSyncStatus('signing in…');
       try {
-        if (isMobile) {
-          await firebase.auth().signInWithRedirect(provider);
+        await firebase.auth().signInWithPopup(provider);
+      } catch (e) {
+        // Popup blocked or not supported (e.g. iOS standalone mode) — fall back to redirect
+        if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+          try {
+            await firebase.auth().signInWithRedirect(provider);
+          } catch (e2) { setSyncStatus('sign-in failed', 'var(--rd)'); console.warn('Sign-in redirect:', e2); }
         } else {
-          await firebase.auth().signInWithPopup(provider);
+          const msg = e.code === 'auth/unauthorized-domain'
+            ? 'Domain not authorized — add kyran-code.github.io to Firebase Console → Auth → Settings → Authorized domains'
+            : (e.message || e.code);
+          setSyncStatus('sign-in failed', 'var(--rd)');
+          alert('Sign-in error: ' + msg);
+          console.warn('Sign-in:', e);
         }
-      } catch (e) { console.warn('Sign-in:', e); }
+      }
     }
     let _firestoreUnsub = null;
     function fbSignOut() {
