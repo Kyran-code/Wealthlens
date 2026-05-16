@@ -2376,10 +2376,13 @@
     function pct(v) { if (v == null || isNaN(v)) return '—'; return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
     function mstr(d) { return String(d).slice(0, 7); } // safe: dates stored as YYYY-MM-DD
     function goldGrams() { return S.goldEntries.filter(g => g.metal === 'Gold').reduce((s, g) => s + g.mass, 0); }
+    // Returns the market value of a holding in USD. SG_FUND totalCost is stored in SGD, so divide by USD rate when falling back to cost.
+    function hMV(h) { const l = LD[h.ticker]; if (l) return l.price * h.totalQty; return h.exchange === 'SG_FUND' ? h.totalCost / USD : h.totalCost; }
+    function hCostUSD(h) { return h.exchange === 'SG_FUND' ? h.totalCost / USD : h.totalCost; }
     function calcCash() { const i = S.transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amt, 0); const e = S.transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amt, 0); return S.cashBase + i - e; }
     function computeLiveNW() {
       const merged = mergedHoldings();
-      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const tMV = merged.reduce((s, h) => s + hMV(h), 0);
       const gG = goldGrams(), tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
       const metalsUSD = (goldSpot ? goldSpot / 31.1035 * gG : 0) + (silverSpot ? silverSpot / 31.1035 * tSg : 0);
       return { nw: Math.round(tMV * USD + metalsUSD * USD + calcCash()), stocksSGD: Math.round(tMV * USD), metalsSGD: Math.round(metalsUSD * USD) };
@@ -2711,8 +2714,8 @@
 
     function renderKpi() {
       const merged = mergedHoldings();
-      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
-      const tC = merged.reduce((s, h) => s + h.totalCost, 0);
+      const tMV = merged.reduce((s, h) => s + hMV(h), 0);
+      const tC = merged.reduce((s, h) => s + hCostUSD(h), 0);
       const gl = tMV - tC, glP = tC ? gl / tC * 100 : 0;
       const day = merged.reduce((s, h) => { const l = LD[h.ticker]; return l ? s + (l.price - l.prev) * h.totalQty : s; }, 0);
       const gG = goldGrams(), gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
@@ -2772,7 +2775,7 @@
     function renderAlloc() {
       const merged = mergedHoldings();
       const groups = {};
-      merged.forEach(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; groups[h.type] = (groups[h.type] || 0) + v; });
+      merged.forEach(h => { groups[h.type] = (groups[h.type] || 0) + hMV(h); });
       const gg = goldGrams(), gVal = goldSpot ? goldSpot / 31.1035 * gg : 0;
       const sg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
       const sVal = silverSpot ? silverSpot / 31.1035 * sg : 0;
@@ -2807,7 +2810,7 @@
     }
     function manualSnap() {
       const merged = mergedHoldings();
-      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const tMV = merged.reduce((s, h) => s + hMV(h), 0);
       const gG = goldGrams(), gUSD = goldSpot ? goldSpot / 31.1035 * gG : 0;
       const tSg = S.goldEntries.filter(g => g.metal === 'Silver').reduce((s, g) => s + g.mass, 0);
       const sUSD = silverSpot ? silverSpot / 31.1035 * tSg : 0;
@@ -2900,7 +2903,7 @@
 
     function renderStocksChart() {
       const merged = mergedHoldings();
-      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
+      const tMV = merged.reduce((s, h) => s + hMV(h), 0);
       const liveVal = Math.round(tMV * USD);
       _buildCompChart('stocks-c', 'stocks', 'stocks-val', 'stocks-chg', liveVal, 'stocks', '#4090ff', 'rgba(64,144,255,0.07)', 'Stocks & Funds');
     }
@@ -2921,7 +2924,7 @@
     async function renderAnalytics() {
       const merged = mergedHoldings();
       const secMap = {};
-      merged.forEach(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; const sec = FD[h.ticker]?.sector || SECTORS[h.ticker] || 'Other'; secMap[sec] = (secMap[sec] || 0) + v; });
+      merged.forEach(h => { const sec = FD[h.ticker]?.sector || SECTORS[h.ticker] || 'Other'; secMap[sec] = (secMap[sec] || 0) + hMV(h); });
       const sortedSec = Object.entries(secMap).sort((a, b) => b[1] - a[1]);
       const sL = sortedSec.map(e => e[0]), sV = sortedSec.map(e => e[1]);
       const sC = ['#4090ff', '#00e5a0', '#ffb740', '#a855f7', '#f04a4a', '#c8f542', '#42d4f5'];
@@ -2938,8 +2941,8 @@
       if (C.bench) C.bench.destroy();
       if (spxData && spxData.length >= 2) {
         const spxMap = {}; spxData.forEach(p => spxMap[p.x] = p.y);
-        const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0);
-        const tC = merged.reduce((s, h) => s + h.totalCost, 0);
+        const tMV = merged.reduce((s, h) => s + hMV(h), 0);
+        const tC = merged.reduce((s, h) => s + hCostUSD(h), 0);
         if (sl.length >= 2) {
           const portBase = sl[0].v || 1;
           const dates = sl.map(p => p.date);
@@ -2961,9 +2964,9 @@
         document.getElementById('bench-title').textContent = 'Portfolio vs S&P 500 — 90 days';
       }
       // Risk
-      const tMV = merged.reduce((s, h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : h.totalCost); }, 0) || 1;
+      const tMV = merged.reduce((s, h) => s + hMV(h), 0) || 1;
       const betas = merged.map(h => FD[h.ticker]?.beta || 1.1);
-      const wts = merged.map(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; return v / tMV; });
+      const wts = merged.map(h => hMV(h) / tMV);
       const portBeta = betas.reduce((s, b, i) => s + b * (wts[i] || 0), 0);
       const techW = (secMap['Technology'] || 0) / sT;
       document.getElementById('risk-metrics').innerHTML = `
@@ -2972,7 +2975,7 @@
     <div class="metric-row"><div class="metric-name">Unique positions</div><div style="font-weight:700;font-size:12px;">${merged.length}</div></div>
     <div class="metric-row"><div class="metric-name">Total lots</div><div style="font-weight:700;font-size:12px;">${S.holdings.length}</div></div>
     <div class="metric-row"><div class="metric-name">USD/SGD rate</div><div style="font-weight:700;font-size:12px;" class="b">${USD.toFixed(4)}</div></div>`;
-      const sorted = merged.map(h => { const l = LD[h.ticker], v = l ? l.price * h.totalQty : h.totalCost; return { ticker: h.ticker, pct: v / tMV * 100 }; }).sort((a, b) => b.pct - a.pct).slice(0, 8);
+      const sorted = merged.map(h => ({ ticker: h.ticker, pct: hMV(h) / tMV * 100 })).sort((a, b) => b.pct - a.pct).slice(0, 8);
       document.getElementById('conc-chart').innerHTML = sorted.map(h => `<div class="conc-bar"><div class="conc-nm">${h.ticker}</div><div class="conc-track"><div class="conc-fill" style="width:${h.pct}%"></div></div><div class="conc-pct">${h.pct.toFixed(1)}%</div></div>`).join('');
     }
 
@@ -3110,8 +3113,8 @@
     async function renderHoldings() {
       const body = document.getElementById('h-body');
       const merged = mergedHoldings().sort((a, b) => {
-        const va = (LD[a.ticker]?.price ?? 0) * a.totalQty || a.totalCost;
-        const vb = (LD[b.ticker]?.price ?? 0) * b.totalQty || b.totalCost;
+        const va = hMV(a);
+        const vb = hMV(b);
         return vb - va;
       });
       if (!merged.length) { body.innerHTML = '<tr><td colspan="16" style="padding:2rem;text-align:center;color:var(--mu);">No holdings yet. Add one above.</td></tr>'; return; }
@@ -3159,7 +3162,7 @@
       // Total row — sums live market values across all holdings
       const totalUSD = merged.reduce((s,h) => { const l = LD[h.ticker]; return s + (l ? l.price * h.totalQty : 0); }, 0);
       const totalSGD = Math.round(totalUSD * USD);
-      const totalCostUSD = merged.reduce((s,h) => s + h.totalCost, 0);
+      const totalCostUSD = merged.reduce((s,h) => s + hCostUSD(h), 0);
       const totalGL = totalUSD - totalCostUSD, totalGLP = totalCostUSD ? totalGL/totalCostUSD*100 : 0, glPos = totalGL >= 0;
       body.innerHTML += `<tr style="border-top:2px solid var(--b2);background:rgba(255,255,255,0.025);">
         <td></td><td style="font-weight:700;font-size:10px;color:var(--mu);letter-spacing:.04em;">TOTAL</td>
@@ -3221,7 +3224,7 @@
       const withDP = merged.map(h => {
         const l = LD[h.ticker];
         const dp = l?.prev ? (l.price - l.prev) / l.prev * 100 : null;
-        const mv = l ? l.price * h.totalQty : h.totalCost;
+        const mv = hMV(h);
         return { ...h, dp, mv, l };
       }).filter(h => h.l);
 
@@ -3338,7 +3341,7 @@
       renderModalNews(ticker, dp);
       // Position
       if (merged && l) {
-        const mv = l.price * merged.totalQty, gl = mv - merged.totalCost, glP = gl / merged.totalCost * 100;
+        const mv = l.price * merged.totalQty, costUSD = hCostUSD(merged), gl = mv - costUSD, glP = costUSD ? gl / costUSD * 100 : 0;
         document.getElementById('m-position').innerHTML = `
       <div style="background:var(--s2);border:1px solid var(--b1);border-radius:10px;padding:1rem;margin-bottom:.75rem;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
