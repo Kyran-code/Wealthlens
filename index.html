@@ -1721,6 +1721,14 @@
     .evt-soon { font-size:8px; font-weight:700; padding:2px 6px; border-radius:10px; }
     .evt-today { background:rgba(0,229,160,.15); color:var(--gr); }
     .evt-tomorrow { background:rgba(255,183,64,.12); color:var(--gd); }
+
+    /* ═══ AI ASSISTANT ═══ */
+    .ai-btn { background:linear-gradient(135deg,rgba(0,229,160,.12),rgba(64,144,255,.12)); border:1px solid rgba(0,229,160,.28); color:var(--gr); font-family:var(--mono); font-size:11px; font-weight:700; padding:5px 14px; border-radius:6px; cursor:pointer; transition:all .15s; }
+    .ai-btn:hover { background:var(--gr); color:#000; border-color:var(--gr); }
+    .ai-chip { display:inline-block; font-size:10px; color:var(--mu); background:var(--s2); border:1px solid var(--b2); border-radius:20px; padding:4px 11px; cursor:pointer; transition:all .12s; white-space:nowrap; }
+    .ai-chip:hover { border-color:var(--gr); color:var(--gr); }
+    .ai-preview-line { font-size:12px; padding:.3rem 0; border-bottom:1px solid var(--b1); line-height:1.5; }
+    .ai-preview-line:last-child { border-bottom:none; }
   </style>
 </head>
 
@@ -1763,6 +1771,7 @@
         <div class="live-badge">
           <div class="live-dot"></div><span id="upd-time">Loading...</span>
         </div>
+        <button class="ai-btn" onclick="openAIModal()">✦ AI</button>
         <button class="refresh-btn" id="refresh-btn" onclick="hardRefresh()">↺ Refresh</button>
         <div id="sync-status" style="font-size:9px;color:var(--mu2);font-family:var(--mono);white-space:nowrap;display:none;"></div>
         <div id="auth-btn"></div>
@@ -2339,6 +2348,53 @@
       <button onclick="document.getElementById('ios-modal').style.display='none'"
         style="margin-top:1.25rem;width:100%;background:var(--gr);color:#000;border:none;font-family:var(--mono);font-size:12px;font-weight:700;padding:10px;border-radius:8px;cursor:pointer;">Got
         it ✓</button>
+    </div>
+  </div>
+
+  <!-- ██ AI ASSISTANT MODAL ██ -->
+  <div id="ai-modal" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.82);backdrop-filter:blur(6px);align-items:center;justify-content:center;padding:1rem;" onclick="if(event.target===this)closeAIModal()">
+    <div style="background:var(--s1);border:1px solid rgba(0,229,160,.25);border-top:2px solid var(--gr);border-radius:18px;width:100%;max-width:580px;max-height:90vh;overflow-y:auto;padding:1.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">
+        <div>
+          <div style="font-family:var(--sans);font-weight:800;font-size:1.05rem;display:flex;align-items:center;gap:.5rem;"><span style="color:var(--gr);">✦</span> AI Portfolio Assistant</div>
+          <div style="font-size:10px;color:var(--mu);margin-top:3px;">Describe what happened — I'll update your portfolio automatically</div>
+        </div>
+        <button onclick="closeAIModal()" style="background:none;border:1px solid var(--b2);color:var(--mu);font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;flex-shrink:0;">✕ Close</button>
+      </div>
+      <!-- Quick-fill examples -->
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.85rem;" id="ai-chips">
+        <span class="ai-chip" onclick="setAIExample(this)">Sold 10 NVDA at $130 on Moomoo</span>
+        <span class="ai-chip" onclick="setAIExample(this)">Bought 5 AAPL at $210, IBKR</span>
+        <span class="ai-chip" onclick="setAIExample(this)">Received SGD 800 NS pay</span>
+        <span class="ai-chip" onclick="setAIExample(this)">Spent SGD 45 on food today</span>
+        <span class="ai-chip" onclick="setAIExample(this)">Bought 5g gold for SGD 650</span>
+        <span class="ai-chip" onclick="setAIExample(this)">Sold all GOOGL at $175, used proceeds to buy 3 MSFT at $420</span>
+      </div>
+      <!-- Input -->
+      <textarea id="ai-input" placeholder="e.g. I sold all my NVDA at $130 on Moomoo and used the proceeds to buy 10 AAPL at $260 on the same account…" style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--tx);font-family:var(--mono);font-size:12px;padding:.75rem;border-radius:8px;outline:none;resize:vertical;min-height:90px;line-height:1.65;transition:border-color .2s;" onfocus="this.style.borderColor='var(--gr)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey))runAI()"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.5rem;gap:.75rem;flex-wrap:wrap;">
+        <div style="font-size:9px;color:var(--mu2);">⌘+Enter to submit · <span onclick="openAIKeyModal()" style="color:var(--bl);cursor:pointer;text-decoration:underline;">API key settings</span></div>
+        <button class="btn btn-gr" onclick="runAI()" id="ai-submit-btn">✦ Update portfolio</button>
+      </div>
+      <!-- Preview area -->
+      <div id="ai-preview" style="margin-top:1rem;"></div>
+    </div>
+  </div>
+
+  <!-- ██ AI KEY MODAL ██ -->
+  <div id="ai-key-modal" style="display:none;position:fixed;inset:0;z-index:2100;background:rgba(0,0,0,.82);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:1rem;" onclick="if(event.target===this)document.getElementById('ai-key-modal').style.display='none'">
+    <div style="background:var(--s1);border:1px solid var(--b2);border-radius:16px;width:min(480px,94vw);padding:1.5rem;">
+      <div style="font-family:var(--sans);font-weight:700;font-size:14px;margin-bottom:.4rem;">✦ Anthropic API Key</div>
+      <div style="font-size:11px;color:var(--mu);margin-bottom:1rem;line-height:1.65;">
+        Your key is stored <strong>locally only</strong> — never synced to the cloud or sent anywhere except Anthropic's API directly.<br>
+        Get a free key (comes with $5 credit) at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--bl);">console.anthropic.com</a>.
+      </div>
+      <input id="ai-key-input" type="password" placeholder="sk-ant-api03-..." style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--tx);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:6px;outline:none;margin-bottom:.75rem;" onfocus="this.style.borderColor='var(--gr)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
+      <div style="display:flex;gap:.5rem;align-items:center;">
+        <button class="btn btn-gr" onclick="saveAIKey()">Save &amp; continue</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('ai-key-modal').style.display='none'">Cancel</button>
+        <button class="btn btn-ghost" onclick="clearAIKey()" style="margin-left:auto;color:var(--rd);border-color:rgba(255,69,69,.3);">Remove key</button>
+      </div>
     </div>
   </div>
 
@@ -4353,7 +4409,247 @@
     window.addEventListener('resize', () => { const s = document.getElementById('sidebar'), m = document.getElementById('main-area'); if (window.innerWidth > 768) { if (s) s.style.transform = ''; m.style.marginLeft = 'var(--sb)'; const o = document.getElementById('sb-ov'); if (o) o.style.display = 'none'; } else m.style.marginLeft = '0'; });
     initMobile();
 
-    // (AI Advisor removed)
+    // ═══════════════════════════════════════════════════════════
+    // AI PORTFOLIO ASSISTANT
+    // ═══════════════════════════════════════════════════════════
+    let _pendingAIActions = null;
+
+    function openAIModal() {
+      if (!localStorage.getItem('wl-ai-key')) { openAIKeyModal(); return; }
+      const modal = document.getElementById('ai-modal');
+      modal.style.display = 'flex';
+      document.getElementById('ai-preview').innerHTML = '';
+      setTimeout(() => document.getElementById('ai-input')?.focus(), 80);
+    }
+    function closeAIModal() { document.getElementById('ai-modal').style.display = 'none'; }
+    function openAIKeyModal() {
+      document.getElementById('ai-key-input').value = localStorage.getItem('wl-ai-key') || '';
+      document.getElementById('ai-key-modal').style.display = 'flex';
+    }
+    function saveAIKey() {
+      const k = document.getElementById('ai-key-input').value.trim();
+      if (!k) return;
+      localStorage.setItem('wl-ai-key', k);
+      document.getElementById('ai-key-modal').style.display = 'none';
+      openAIModal();
+    }
+    function clearAIKey() { localStorage.removeItem('wl-ai-key'); document.getElementById('ai-key-modal').style.display = 'none'; }
+    function setAIExample(el) { document.getElementById('ai-input').value = el.textContent.trim(); document.getElementById('ai-input').focus(); }
+
+    function _buildAIContext() {
+      const merged = mergedHoldings();
+      const holdStr = merged.length
+        ? merged.map(h => { const l = LD[h.ticker]; return `  ${h.ticker} (${h.name}): ${h.totalQty} shares @ avg $${h.avgCost.toFixed(2)}, exchange:${h.exchange||'US'}, accounts:${h.accounts.map(a=>a.account).join('/')}${l ? `, live:$${l.price.toFixed(2)}` : ''}`; }).join('\n')
+        : '  (none)';
+      const goldStr = S.goldEntries.length
+        ? S.goldEntries.map(g => `  ${g.metal} ${g.mass.toFixed(1)}g paid SGD ${g.paid}`).join('\n')
+        : '  (none)';
+      return `Date: ${td()}  USD/SGD: ${USD.toFixed(4)}\nHOLDINGS:\n${holdStr}\nGOLD:\n${goldStr}\nCASH: SGD ${Math.round(calcCash()).toLocaleString()}`;
+    }
+
+    async function runAI() {
+      const key = localStorage.getItem('wl-ai-key');
+      if (!key) { openAIKeyModal(); return; }
+      const input = (document.getElementById('ai-input').value || '').trim();
+      if (!input) return;
+      const btn = document.getElementById('ai-submit-btn');
+      const prev = document.getElementById('ai-preview');
+      btn.disabled = true; btn.textContent = '✦ Thinking…';
+      prev.innerHTML = '<div style="color:var(--mu);font-size:11px;padding:.5rem 0;" class="ld-txt">Parsing your update</div>';
+
+      const sys = `You are a portfolio assistant for WealthLens. Parse the user's natural-language portfolio update into structured JSON actions.
+
+CURRENT PORTFOLIO:
+${_buildAIContext()}
+
+Return ONLY a valid JSON object — no markdown, no prose — with this exact shape:
+{"actions":[...],"summary":"one-sentence human summary"}
+
+Supported action types:
+
+sell_holding   — reduce or remove a holding
+  {"type":"sell_holding","ticker":"NVDA","account":"Moomoo","qty_sold":10,"price_usd":150.00,"add_proceeds_to_cash":false}
+  • price_usd in USD for US/LSE/HKEx/SGX; use price_sgd for SG_FUND
+  • add_proceeds_to_cash: true only if user says they kept/deposited the cash
+
+buy_holding    — add or increase a holding
+  {"type":"buy_holding","ticker":"AAPL","name":"Apple Inc.","qty":5,"cost_usd":200.00,"exchange":"US","holding_type":"US Stock","account":"Moomoo"}
+  • exchange: "US" | "LSE" | "HKEx" | "SGX" | "SG_FUND"
+  • holding_type: "US Stock" | "ETF" | "SG Fund"
+  • use cost_sgd instead of cost_usd for SG_FUND
+
+add_transaction — record a cash inflow or outflow
+  {"type":"add_transaction","tx_type":"income","cat":"NS Pay","desc":"NS allowance","amt_sgd":800.00,"date":"${td()}"}
+  • tx_type: "income" | "expense"
+  • cat options: "NS Pay","Allowance (parents)","Business income","Investment return","Food & drinks","Transport","Shopping","Travel","Entertainment","Education","Investments","Subscriptions","Utilities","Healthcare","Other"
+
+add_gold       — add a physical metal entry
+  {"type":"add_gold","metal":"Gold","mass_grams":5.0,"paid_sgd":650.00,"source":"Bought","note":"","date":"${td()}"}
+
+update_nav     — update manual NAV for a SG unit trust
+  {"type":"update_nav","ticker":"FUND_CODE","nav_sgd":1.2345}
+
+RULES:
+• Default account → "Moomoo" if not stated
+• Default date → today (${td()})
+• "Used proceeds to buy X" → do NOT add a cash transaction (internal reinvestment)
+• If selling ALL of a holding, set qty_sold to the exact held quantity
+• If message is not a portfolio update, return {"actions":[],"summary":"Please describe a portfolio change — a trade, expense, income, or metal purchase."}
+• Return ONLY the JSON object`;
+
+      try {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-allow-browser': 'true' },
+          body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1200, system: sys, messages: [{ role: 'user', content: input }] })
+        });
+        if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e?.error?.message || 'API error ' + r.status); }
+        const data = await r.json();
+        const raw = (data.content?.[0]?.text || '').replace(/```json?\n?/gi,'').replace(/```/g,'').trim();
+        const parsed = JSON.parse(raw);
+        _showAIPreview(parsed);
+      } catch(e) {
+        const isAuth = e.message?.includes('401') || e.message?.includes('auth') || e.message?.includes('API key');
+        prev.innerHTML = `<div style="color:var(--rd);font-size:11px;padding:.75rem;background:rgba(255,69,69,.07);border:1px solid rgba(255,69,69,.2);border-radius:8px;">
+          <strong>Error:</strong> ${esc(e.message)}<br>
+          <span style="color:var(--mu);font-size:10px;margin-top:4px;display:block;">${isAuth ? 'Invalid or expired API key — <span onclick="openAIKeyModal()" style="color:var(--bl);cursor:pointer;text-decoration:underline;">update it here</span>.' : 'Check your internet connection. Make sure you have credits at console.anthropic.com.'}</span>
+        </div>`;
+      }
+      btn.disabled = false; btn.textContent = '✦ Update portfolio';
+    }
+
+    function _showAIPreview(parsed) {
+      _pendingAIActions = parsed.actions?.length ? parsed.actions : null;
+      const prev = document.getElementById('ai-preview');
+      if (!_pendingAIActions) {
+        prev.innerHTML = `<div style="color:var(--mu);font-size:11px;padding:.75rem;background:var(--s2);border-radius:8px;">${esc(parsed.summary || 'No actions found. Try being more specific.')}</div>`;
+        return;
+      }
+      const lines = _pendingAIActions.map(a => {
+        switch(a.type) {
+          case 'sell_holding':   return `<div class="ai-preview-line" style="color:var(--rd);">🔴 Sell <strong>${esc(a.ticker)}</strong> — ${a.qty_sold} shares @ $${(+a.price_usd||+a.price_sgd||0).toFixed(2)} (${esc(a.account||'?')})${a.add_proceeds_to_cash?' + cash proceeds':''}</div>`;
+          case 'buy_holding':    return `<div class="ai-preview-line" style="color:var(--gr);">🟢 Buy <strong>${esc(a.ticker)}</strong> (${esc(a.name||'')}) — ${a.qty} × ${a.cost_usd!=null?'$'+a.cost_usd.toFixed(2):'SGD '+a.cost_sgd} (${esc(a.account||'?')})</div>`;
+          case 'add_transaction':return `<div class="ai-preview-line" style="color:${a.tx_type==='income'?'var(--gr)':'var(--gd)'};">${a.tx_type==='income'?'💰':'💸'} ${a.tx_type==='income'?'Income':'Expense'} SGD ${(+a.amt_sgd||0).toFixed(2)} — ${esc(a.desc||a.cat||'')} [${esc(a.cat||'')}] on ${a.date||td()}</div>`;
+          case 'add_gold':       return `<div class="ai-preview-line" style="color:var(--gd);">🥇 Add ${esc(a.metal)} ${a.mass_grams}g, paid SGD ${a.paid_sgd}</div>`;
+          case 'update_nav':     return `<div class="ai-preview-line" style="color:var(--bl);">🔄 Update NAV for ${esc(a.ticker)}: SGD ${a.nav_sgd}</div>`;
+          default: return `<div class="ai-preview-line" style="color:var(--mu);">${esc(JSON.stringify(a))}</div>`;
+        }
+      }).join('');
+      prev.innerHTML = `
+        <div style="background:var(--s2);border:1px solid var(--b1);border-radius:10px;padding:.9rem 1rem;margin-bottom:.75rem;">
+          <div style="font-size:9px;color:var(--mu);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.7rem;font-family:var(--sans);font-weight:700;">Proposed changes — review before applying</div>
+          ${lines}
+          ${parsed.summary ? `<div style="font-size:10px;color:var(--mu2);margin-top:.7rem;padding-top:.6rem;border-top:1px solid var(--b1);">AI: ${esc(parsed.summary)}</div>` : ''}
+        </div>
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
+          <button class="btn btn-gr" onclick="applyAIActions()">✓ Apply changes</button>
+          <button class="btn btn-ghost" onclick="_pendingAIActions=null;document.getElementById('ai-preview').innerHTML='';document.getElementById('ai-input').value=''">✗ Discard</button>
+        </div>`;
+    }
+
+    function applyAIActions() {
+      if (!_pendingAIActions?.length) return;
+      const affected = new Set();
+      for (const a of _pendingAIActions) {
+        try {
+          switch(a.type) {
+            case 'sell_holding':    _aiExecSell(a);    if(a.ticker) affected.add(sanitizeTicker(a.ticker)); break;
+            case 'buy_holding':     _aiExecBuy(a);     if(a.ticker) affected.add(sanitizeTicker(a.ticker)); break;
+            case 'add_transaction': _aiExecTx(a);      break;
+            case 'add_gold':        _aiExecGoldAdd(a); break;
+            case 'update_nav':      _aiExecNav(a);     if(a.ticker) affected.add(sanitizeTicker(a.ticker)); break;
+          }
+        } catch(e) { console.warn('AI action failed:', a.type, e); }
+      }
+      saveS();
+      _pendingAIActions = null;
+      closeAIModal();
+      // Re-fetch prices for bought/modified tickers, then re-render
+      const toFetch = [...affected];
+      if (toFetch.length) {
+        Promise.allSettled(toFetch.map(t => { const h = S.holdings.find(x => x.ticker === t); return fetchQ(h ? yfSymbol(h) : t).then(q => { if(q) LD[t] = q; }); }))
+          .then(() => { renderDash(); renderHoldings(); renderCash(); renderGold(); });
+      } else {
+        renderDash(); renderHoldings(); renderCash(); renderGold();
+      }
+      _aiToast('Portfolio updated ✓');
+    }
+
+    function _aiExecSell(a) {
+      const ticker = sanitizeTicker(a.ticker || '');
+      const account = a.account || null;
+      const qtySold = Math.abs(parseFloat(a.qty_sold) || 0);
+      const priceUSD = parseFloat(a.price_usd || 0);
+      const priceSGD = parseFloat(a.price_sgd || 0);
+      if (!ticker || qtySold <= 0) return;
+      const lots = S.holdings.filter(h => h.ticker === ticker && (!account || h.account === account));
+      if (!lots.length) { console.warn('AI sell: holding not found', ticker, account); return; }
+      const totalQty = lots.reduce((s, h) => s + h.qty, 0);
+      if (qtySold >= totalQty * 0.9999) {
+        // Sell all
+        S.holdings = S.holdings.filter(h => !(h.ticker === ticker && (!account || h.account === account)));
+      } else {
+        // Partial — reduce proportionally across lots
+        const ratio = qtySold / totalQty;
+        S.holdings.forEach(h => { if (h.ticker === ticker && (!account || h.account === account)) h.qty = Math.round((h.qty * (1 - ratio)) * 10000) / 10000; });
+        S.holdings = S.holdings.filter(h => h.qty > 0.00001);
+      }
+      if (a.add_proceeds_to_cash) {
+        const isFund = lots[0]?.exchange === 'SG_FUND';
+        const proceedsSGD = isFund ? Math.round(qtySold * priceSGD) : Math.round(qtySold * priceUSD * USD);
+        if (proceedsSGD > 0) S.transactions.unshift({ id: uid(), type: 'income', cat: 'Investment return', desc: `Sold ${qtySold} ${ticker}`, amt: proceedsSGD, date: td() });
+      }
+    }
+
+    function _aiExecBuy(a) {
+      const ticker = sanitizeTicker(a.ticker || '');
+      const qty = parseFloat(a.qty) || 0;
+      const costUSD = a.cost_usd != null ? parseFloat(a.cost_usd) : null;
+      const costSGD = a.cost_sgd != null ? parseFloat(a.cost_sgd) : null;
+      const cost = costUSD ?? costSGD ?? 0;
+      const exchange = a.exchange || 'US';
+      const account = a.account || 'Moomoo';
+      if (!ticker || qty <= 0 || cost <= 0) return;
+      const ex = S.holdings.findIndex(h => h.ticker === ticker && h.account === account);
+      if (ex >= 0) {
+        const old = S.holdings[ex];
+        const newQty = old.qty + qty;
+        const newCost = (old.qty * old.cost + qty * cost) / newQty;
+        S.holdings[ex] = { ...old, qty: Math.round(newQty * 10000) / 10000, cost: Math.round(newCost * 10000) / 10000, name: a.name || old.name, exchange };
+        if (exchange === 'SG_FUND' && costSGD) S.holdings[ex].manualPrice = costSGD;
+      } else {
+        const h = { ticker, name: a.name || ticker, qty, cost, type: a.holding_type || 'US Stock', account, exchange };
+        if (exchange === 'SG_FUND' && costSGD) h.manualPrice = costSGD;
+        S.holdings.push(h);
+      }
+    }
+
+    function _aiExecTx(a) {
+      const amt = parseFloat(a.amt_sgd) || 0;
+      if (amt <= 0) return;
+      S.transactions.unshift({ id: uid(), type: a.tx_type || 'expense', cat: a.cat || 'Other', desc: a.desc || a.cat || 'Other', amt, date: a.date || td() });
+    }
+
+    function _aiExecGoldAdd(a) {
+      const mass = parseFloat(a.mass_grams) || 0;
+      if (mass <= 0) return;
+      S.goldEntries.push({ id: uid(), metal: a.metal || 'Gold', mass, paid: parseFloat(a.paid_sgd) || 0, src: a.source || 'Bought', note: a.note || '', date: a.date || td() });
+    }
+
+    function _aiExecNav(a) {
+      const ticker = sanitizeTicker(a.ticker || '');
+      const nav = parseFloat(a.nav_sgd) || 0;
+      if (!ticker || nav <= 0) return;
+      S.holdings.filter(h => h.ticker === ticker).forEach(h => { h.manualPrice = nav; });
+    }
+
+    function _aiToast(msg) {
+      const t = document.createElement('div');
+      t.textContent = msg;
+      t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--gr);color:#000;font-family:var(--mono);font-weight:700;font-size:12px;padding:9px 22px;border-radius:22px;z-index:9999;pointer-events:none;white-space:nowrap;animation:fi .3s ease;';
+      document.body.appendChild(t);
+      setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .4s'; setTimeout(() => t.remove(), 400); }, 2600);
+    }
   </script>
 </body>
 
