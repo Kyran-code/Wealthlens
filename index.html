@@ -2384,12 +2384,12 @@
   <!-- ██ AI KEY MODAL ██ -->
   <div id="ai-key-modal" style="display:none;position:fixed;inset:0;z-index:2100;background:rgba(0,0,0,.82);backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:1rem;" onclick="if(event.target===this)document.getElementById('ai-key-modal').style.display='none'">
     <div style="background:var(--s1);border:1px solid var(--b2);border-radius:16px;width:min(480px,94vw);padding:1.5rem;">
-      <div style="font-family:var(--sans);font-weight:700;font-size:14px;margin-bottom:.4rem;">✦ Anthropic API Key</div>
+      <div style="font-family:var(--sans);font-weight:700;font-size:14px;margin-bottom:.4rem;">✦ Groq API Key</div>
       <div style="font-size:11px;color:var(--mu);margin-bottom:1rem;line-height:1.65;">
-        Your key is stored <strong>locally only</strong> — never synced to the cloud or sent anywhere except Anthropic's API directly.<br>
-        Get a free key (comes with $5 credit) at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--bl);">console.anthropic.com</a>.
+        Your key is stored <strong>locally only</strong> — never synced to the cloud or sent anywhere except Groq's API directly.<br>
+        Get a <strong>free</strong> key (no credit card needed) at <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color:var(--bl);">console.groq.com/keys</a>.
       </div>
-      <input id="ai-key-input" type="password" placeholder="sk-ant-api03-..." style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--tx);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:6px;outline:none;margin-bottom:.75rem;" onfocus="this.style.borderColor='var(--gr)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
+      <input id="ai-key-input" type="password" placeholder="gsk_..." style="width:100%;background:var(--bg);border:1px solid var(--b2);color:var(--tx);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:6px;outline:none;margin-bottom:.75rem;" onfocus="this.style.borderColor='var(--gr)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
       <div style="display:flex;gap:.5rem;align-items:center;">
         <button class="btn btn-gr" onclick="saveAIKey()">Save &amp; continue</button>
         <button class="btn btn-ghost" onclick="document.getElementById('ai-key-modal').style.display='none'">Cancel</button>
@@ -4415,7 +4415,7 @@
     let _pendingAIActions = null;
 
     function openAIModal() {
-      if (!localStorage.getItem('wl-ai-key')) { openAIKeyModal(); return; }
+      if (!localStorage.getItem('wl-groq-key')) { openAIKeyModal(); return; }
       const modal = document.getElementById('ai-modal');
       modal.style.display = 'flex';
       document.getElementById('ai-preview').innerHTML = '';
@@ -4423,17 +4423,17 @@
     }
     function closeAIModal() { document.getElementById('ai-modal').style.display = 'none'; }
     function openAIKeyModal() {
-      document.getElementById('ai-key-input').value = localStorage.getItem('wl-ai-key') || '';
+      document.getElementById('ai-key-input').value = localStorage.getItem('wl-groq-key') || '';
       document.getElementById('ai-key-modal').style.display = 'flex';
     }
     function saveAIKey() {
       const k = document.getElementById('ai-key-input').value.trim();
       if (!k) return;
-      localStorage.setItem('wl-ai-key', k);
+      localStorage.setItem('wl-groq-key', k);
       document.getElementById('ai-key-modal').style.display = 'none';
       openAIModal();
     }
-    function clearAIKey() { localStorage.removeItem('wl-ai-key'); document.getElementById('ai-key-modal').style.display = 'none'; }
+    function clearAIKey() { localStorage.removeItem('wl-groq-key'); document.getElementById('ai-key-modal').style.display = 'none'; }
     function setAIExample(el) { document.getElementById('ai-input').value = el.textContent.trim(); document.getElementById('ai-input').focus(); }
 
     function _buildAIContext() {
@@ -4448,7 +4448,7 @@
     }
 
     async function runAI() {
-      const key = localStorage.getItem('wl-ai-key');
+      const key = localStorage.getItem('wl-groq-key');
       if (!key) { openAIKeyModal(); return; }
       const input = (document.getElementById('ai-input').value || '').trim();
       if (!input) return;
@@ -4498,21 +4498,21 @@ RULES:
 • Return ONLY the JSON object`;
 
       try {
-        const r = await fetch('https://api.anthropic.com/v1/messages', {
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-allow-browser': 'true' },
-          body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 1200, system: sys, messages: [{ role: 'user', content: input }] })
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+          body: JSON.stringify({ model: 'llama-3.3-70b-versatile', max_tokens: 1200, temperature: 0, messages: [{ role: 'system', content: sys }, { role: 'user', content: input }] })
         });
         if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e?.error?.message || 'API error ' + r.status); }
         const data = await r.json();
-        const raw = (data.content?.[0]?.text || '').replace(/```json?\n?/gi,'').replace(/```/g,'').trim();
+        const raw = (data.choices?.[0]?.message?.content || '').replace(/```json?\n?/gi,'').replace(/```/g,'').trim();
         const parsed = JSON.parse(raw);
         _showAIPreview(parsed);
       } catch(e) {
         const isAuth = e.message?.includes('401') || e.message?.includes('auth') || e.message?.includes('API key');
         prev.innerHTML = `<div style="color:var(--rd);font-size:11px;padding:.75rem;background:rgba(255,69,69,.07);border:1px solid rgba(255,69,69,.2);border-radius:8px;">
           <strong>Error:</strong> ${esc(e.message)}<br>
-          <span style="color:var(--mu);font-size:10px;margin-top:4px;display:block;">${isAuth ? 'Invalid or expired API key — <span onclick="openAIKeyModal()" style="color:var(--bl);cursor:pointer;text-decoration:underline;">update it here</span>.' : 'Check your internet connection. Make sure you have credits at console.anthropic.com.'}</span>
+          <span style="color:var(--mu);font-size:10px;margin-top:4px;display:block;">${isAuth ? 'Invalid or expired Groq API key — <span onclick="openAIKeyModal()" style="color:var(--bl);cursor:pointer;text-decoration:underline;">update it here</span>.' : 'Check your internet connection. Get a free Groq key at console.groq.com/keys.'}</span>
         </div>`;
       }
       btn.disabled = false; btn.textContent = '✦ Update portfolio';
