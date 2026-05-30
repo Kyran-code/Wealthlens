@@ -3993,7 +3993,15 @@
     // ═══════════════════════════════════════════════════════════
     // PWA & MOBILE
     // ═══════════════════════════════════════════════════════════
-    if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => { }));
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+      // When a new SW takes control (new version deployed), reload once so the fresh files are served.
+      // The `refreshing` flag prevents an infinite reload loop.
+      let _swRefreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!_swRefreshing) { _swRefreshing = true; window.location.reload(); }
+      });
+    }
     window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; if (!localStorage.getItem('pwa-dismissed')) setTimeout(() => { document.getElementById('pwa-banner').style.display = 'flex'; }, 4000); });
     function checkIOS() { const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone; if (isIOS && !localStorage.getItem('pwa-dismissed')) setTimeout(() => { document.getElementById('pwa-banner').style.display = 'flex'; document.getElementById('install-btn').textContent = 'How to install →'; }, 4000); } checkIOS();
     function installPWA() { if (/iphone|ipad|ipod/i.test(navigator.userAgent)) { document.getElementById('ios-modal').style.display = 'flex'; return; } if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.then(r => { if (r.outcome === 'accepted') { document.getElementById('pwa-banner').style.display = 'none'; localStorage.setItem('pwa-dismissed', '1'); } deferredPrompt = null; }); } }
