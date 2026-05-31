@@ -2462,6 +2462,10 @@
     function uid() { return (self.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8); }
     // Constrain tickers to a safe charset so they're safe inside element IDs and inline handlers
     function sanitizeTicker(t) { return String(t || '').trim().toUpperCase().replace(/[^A-Z0-9._\-=^]/g, ''); }
+    // A transaction is "invested capital" (buying assets), not an everyday expense — tracked as its own bucket
+    function isInvestTx(t) { return t.type === 'expense' && t.cat === 'Investments'; }
+    // London-listed UCITS ETFs (and similar) that trade on the LSE — Yahoo needs the ".L" suffix to price them
+    const LSE_ETFS = new Set(['CSPX', 'VWRA', 'VWRP', 'VWRL', 'IWDA', 'SWDA', 'EIMI', 'VFEM', 'VHVG', 'VUAA', 'VUSA', 'VUKG', 'AGGG', 'SGLN', 'V3AA', 'V3AB', 'ISAC', 'SSAC', 'VAGU', 'CNDX', 'EQQQ', 'IITU', 'IUIT', 'WSML', 'VWCE', 'VUAG']);
     // Quote-aware single-line CSV split (handles delimiters inside quoted fields + doubled quotes)
     function splitCsvLine(line, delim) { const r = []; let f = '', q = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (c === '"') { if (q && line[i + 1] === '"') { f += '"'; i++; } else q = !q; } else if (c === delim && !q) { r.push(f.trim()); f = ''; } else f += c; } r.push(f.trim()); return r; }
     // Tracked sparkline renderer — destroys any prior chart on the same canvas to prevent leaks/races
@@ -3394,8 +3398,9 @@
       const losers  = withDP.filter(h => h.dp < -0.3).sort((a, b) => a.dp - b.dp).slice(0, 3);
       const flat    = !gainers.length && !losers.length;
 
-      // Fetch one headline for each significant mover (parallel)
-      const movers = [...gainers, ...losers].slice(0, 5);
+      // Fetch one headline for every displayed mover (parallel).
+      // (Must cover all gainers + losers — capping at 5 left the 3rd "Under Pressure" card with no news.)
+      const movers = [...gainers, ...losers];
       const newsMap = {};
       await Promise.all(movers.map(async h => {
         const items = await fetchNews(h.ticker, 1);
@@ -3704,19 +3709,21 @@
       document.getElementById('cash-month-next').style.opacity = cashMonth >= todayMonth ? '0.3' : '1';
       document.getElementById('cash-month-next').disabled = cashMonth >= todayMonth;
 
-      // Month transactions
+      // Month transactions — investments (capital deployed) are tracked separately from everyday expenses
       const monthTx = S.transactions.filter(t => mstr(t.date) === cashMonth);
       const monthIncome = monthTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amt, 0);
-      const monthExpense = monthTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amt, 0);
-      const net = monthIncome - monthExpense;
+      const monthInvested = monthTx.filter(isInvestTx).reduce((s, t) => s + t.amt, 0);
+      const monthExpense = monthTx.filter(t => t.type === 'expense' && !isInvestTx(t)).reduce((s, t) => s + t.amt, 0);
+      const net = monthIncome - monthExpense - monthInvested;
       document.getElementById('cash-month-summary').innerHTML =
         `Income: <strong style="color:var(--gr)">SGD ${Math.round(monthIncome).toLocaleString()}</strong>&nbsp;&nbsp;` +
         `Expenses: <strong style="color:var(--rd)">SGD ${Math.round(monthExpense).toLocaleString()}</strong>&nbsp;&nbsp;` +
+        (monthInvested > 0 ? `Invested: <strong style="color:var(--bl)">SGD ${Math.round(monthInvested).toLocaleString()}</strong>&nbsp;&nbsp;` : '') +
         `Net: <strong style="color:${net >= 0 ? 'var(--gr)' : 'var(--rd)'}">SGD ${net >= 0 ? '+' : ''}${Math.round(net).toLocaleString()}</strong>`;
 
-      // Spending pie — filtered to selected month
+      // Spending pie — everyday expenses only (excludes investments)
       const ebyCat = {};
-      monthTx.filter(t => t.type === 'expense').forEach(t => { ebyCat[t.cat] = (ebyCat[t.cat] || 0) + t.amt; });
+      monthTx.filter(t => t.type === 'expense' && !isInvestTx(t)).forEach(t => { ebyCat[t.cat] = (ebyCat[t.cat] || 0) + t.amt; });
       const sorted = Object.entries(ebyCat).sort((a, b) => b[1] - a[1]);
       const cats = sorted.map(e => e[0]), vals = sorted.map(e => e[1]), totE = vals.reduce((a, b) => a + b, 0) || 1;
       const ctx = document.getElementById('c-spend').getContext('2d');
@@ -3737,10 +3744,11 @@
       }
       const flowLabels = months.map(m => { const [y,mo] = m.split('-'); return new Date(+y, +mo-1, 1).toLocaleDateString('en-SG', { month: 'short', year: '2-digit' }); });
       const iM = months.map(m => S.transactions.filter(t => t.type === 'income' && mstr(t.date) === m).reduce((s, t) => s + t.amt, 0));
-      const eM = months.map(m => S.transactions.filter(t => t.type === 'expense' && mstr(t.date) === m).reduce((s, t) => s + t.amt, 0));
+      const eM = months.map(m => S.transactions.filter(t => t.type === 'expense' && !isInvestTx(t) && mstr(t.date) === m).reduce((s, t) => s + t.amt, 0));
+      const invM = months.map(m => S.transactions.filter(t => isInvestTx(t) && mstr(t.date) === m).reduce((s, t) => s + t.amt, 0));
       const cf = document.getElementById('c-flow').getContext('2d');
       if (C.flow) C.flow.destroy();
-      C.flow = new Chart(cf, { type: 'bar', data: { labels: flowLabels, datasets: [{ label: 'Income', data: iM, backgroundColor: 'rgba(0,229,160,0.8)', borderRadius: 4 }, { label: 'Expenses', data: eM, backgroundColor: 'rgba(240,74,74,0.8)', borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { color: '#6b7a99', font: { size: 10 }, boxWidth: 8 } } }, scales: { x: { ticks: { color: '#6b7a99', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#6b7a99', font: { size: 10 }, callback: v => 'SGD ' + v }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
+      C.flow = new Chart(cf, { type: 'bar', data: { labels: flowLabels, datasets: [{ label: 'Income', data: iM, backgroundColor: 'rgba(0,229,160,0.8)', borderRadius: 4 }, { label: 'Expenses', data: eM, backgroundColor: 'rgba(240,74,74,0.8)', borderRadius: 4 }, { label: 'Invested', data: invM, backgroundColor: 'rgba(64,144,255,0.8)', borderRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top', labels: { color: '#6b7a99', font: { size: 10 }, boxWidth: 8 } } }, scales: { x: { ticks: { color: '#6b7a99', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.03)' } }, y: { ticks: { color: '#6b7a99', font: { size: 10 }, callback: v => 'SGD ' + v }, grid: { color: 'rgba(255,255,255,0.03)' } } } } });
       renderTxList();
     }
 
@@ -4182,8 +4190,9 @@
         // Skip cash rows (e.g. ticker "USD", "EUR") and invalid rows
         if (!ticker || ticker.length > 12 || isNaN(qty) || qty <= 0 || isNaN(cost) || cost <= 0) continue;
         if (assetClass === 'cash' || ticker.match(/^(USD|EUR|GBP|AUD|CAD|CHF|JPY|SGD|HKD)$/i)) continue;
+        const baseTk = ticker.replace(/\.(L|HK|SI)$/i, '');
         let type = 'US Stock';
-        if (assetClass.includes('etf') || ticker.match(/^(SPY|QQQ|VTI|VOO|VEA|VWO|IWM|GLD|SLV|XL[A-Z]|ARK[A-Z])/i)) type = 'ETF';
+        if (assetClass.includes('etf') || LSE_ETFS.has(baseTk) || ticker.match(/^(SPY|QQQ|VTI|VOO|VEA|VWO|IWM|GLD|SLV|XL[A-Z]|ARK[A-Z])/i)) type = 'ETF';
         else if (assetClass.includes('opt') || assetClass.includes('fut')) continue; // skip options/futures
         // Infer exchange so non-US listings get the correct Yahoo suffix (otherwise they never price)
         let exchange = 'US';
@@ -4192,6 +4201,7 @@
         else if (/\.L$/i.test(ticker)) exchange = 'LSE';
         else if (/\.HK$/i.test(ticker)) exchange = 'HKEx';
         else if (/\.SI$/i.test(ticker)) exchange = 'SGX';
+        else if (LSE_ETFS.has(baseTk)) { exchange = 'LSE'; ticker = baseTk + '.L'; } // known London ETF without an exchange column
         results.push({ ticker, name: _findCol(row, ['Description', 'Name', 'Company']) || ticker, qty, cost, type, account: 'IBKR', exchange });
       }
       return results;
@@ -4206,18 +4216,25 @@
         const qty = parseFloat(String(qtyRaw).replace(/[^0-9.-]/g, ''));
         const cost = parseFloat(String(costRaw).replace(/[^0-9.-]/g, ''));
         if (isNaN(qty) || qty <= 0 || isNaN(cost) || cost <= 0) continue;
-        // Detect exchange from ticker suffix or name
-        let ticker = rawTicker.toUpperCase();
-        let exchange = 'US';
-        let type = 'US Stock';
-        if (ticker.endsWith('.L') || ticker.endsWith(' LN')) { exchange = 'LSE'; type = 'ETF'; ticker = ticker.replace(/\.L$| LN$/, '') + '.L'; }
-        else if (ticker.endsWith('.HK') || /^\d{4,5}$/.test(ticker)) { exchange = 'HKEx'; type = 'US Stock'; ticker = ticker.replace(/\.HK$/, '') + '.HK'; }
-        else if (ticker.endsWith('.SI')) { exchange = 'SGX'; type = 'US Stock'; ticker = ticker.replace(/\.SI$/, '') + '.SI'; }
-        else if (!ticker || ticker.length > 12 || /fund|sgd|acc|inc|cls/i.test(name)) {
-          // Likely a SG unit trust — use name as ticker key, mark as SG Fund
-          ticker = ticker || name.replace(/\s+/g, '_').slice(0, 12).toUpperCase();
+        // Detect exchange from ticker suffix, known-ETF list, or name
+        const up = rawTicker.toUpperCase().replace(/\s+/g, '');
+        const base = up.replace(/\.(L|LN|UK|HK|SI|US|O|N)$/i, '').replace(/\s?LN$/i, '');
+        let ticker = up, exchange = 'US', type = 'US Stock';
+        if (/(\.L|\.LN|\.UK| LN)$/i.test(rawTicker.toUpperCase()) || LSE_ETFS.has(base)) {
+          // London-listed (UCITS ETFs etc.) — must carry .L for Yahoo to return a price
+          exchange = 'LSE'; type = 'ETF'; ticker = base + '.L';
+        } else if (/\.HK$/i.test(up) || /^\d{4,5}$/.test(base)) {
+          exchange = 'HKEx'; type = 'US Stock'; ticker = base + '.HK';
+        } else if (/\.SI$/i.test(up)) {
+          exchange = 'SGX'; type = 'US Stock'; ticker = base + '.SI';
+        } else if (!base || base.length > 12 || /\bfund\b/i.test(name) || /unit trust/i.test(name)) {
+          // SG unit trust — no real exchange ticker. Use a name-derived key.
+          // (Avoid matching "Inc."/"Acc" inside ordinary company names — only a real "Fund"/"Unit Trust" qualifies.)
+          ticker = base || name.replace(/\s+/g, '_').slice(0, 12).toUpperCase();
           exchange = 'SG_FUND'; type = 'SG Fund';
-        } else if (ticker.match(/^(SPY|QQQ|VTI|VOO|VEA|VWO|IWM|GLD|SLV|XL[A-Z]|ARK[A-Z]|CSPX|VWRA|IWDA)/i)) type = 'ETF';
+        } else if (base.match(/^(SPY|QQQ|VTI|VOO|VEA|VWO|IWM|GLD|SLV|XL[A-Z]|ARK[A-Z])/i)) {
+          type = 'ETF';
+        }
         ticker = sanitizeTicker(ticker);
         if (!ticker) continue;
         results.push({ ticker, name, qty, cost, type, account: 'Moomoo', exchange });
