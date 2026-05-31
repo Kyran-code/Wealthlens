@@ -1762,6 +1762,11 @@
     <div class="sb-footer">
       <div class="mkt-row" id="mkt-status-row"></div>
       <div id="sb-time" style="margin-top:2px;font-size:9px;"></div>
+      <div style="display:flex;gap:6px;margin-top:.75rem;">
+        <button onclick="exportData()" title="Download a backup of all your data" style="flex:1;background:none;border:1px solid var(--b2);color:var(--mu);font-family:var(--mono);font-size:10px;padding:5px 6px;border-radius:6px;cursor:pointer;">⤓ Backup</button>
+        <button onclick="document.getElementById('import-data-input').click()" title="Restore from a backup file" style="flex:1;background:none;border:1px solid var(--b2);color:var(--mu);font-family:var(--mono);font-size:10px;padding:5px 6px;border-radius:6px;cursor:pointer;">⤒ Restore</button>
+        <input type="file" id="import-data-input" accept="application/json,.json" style="display:none;" onchange="importData(event)">
+      </div>
     </div>
   </aside>
 
@@ -2467,6 +2472,52 @@
     function lS() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || JSON.parse(localStorage.getItem('wl1')) || null; } catch { return null; } }
     function saveS() {
       localStorage.setItem(STORE_KEY, JSON.stringify(S));
+    }
+
+    // ─── BACKUP / RESTORE ────────────────────────────────────────
+    // Manual local-first backup: export the full state to a JSON file, restore it later.
+    async function exportData() {
+      const json = JSON.stringify(S, null, 2);
+      const fname = 'wealthlens-backup-' + td() + '.json';
+      // On mobile, prefer the native share sheet (save to Files, email to yourself, AirDrop…)
+      try {
+        const file = new File([json], fname, { type: 'application/json' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'WealthLens backup' });
+          return;
+        }
+      } catch (e) { if (e && e.name === 'AbortError') return; /* else fall back to download */ }
+      // Desktop / fallback: trigger a file download
+      try {
+        const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+        const a = document.createElement('a');
+        a.href = url; a.download = fname;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        _aiToast('Backup downloaded ✓');
+      } catch (e) { alert('Export failed: ' + e.message); }
+    }
+
+    async function importData(e) {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = ''; // allow re-importing the same file later
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        if (!data || typeof data !== 'object' || !('holdings' in data || 'transactions' in data || 'goldEntries' in data)) {
+          alert("That doesn't look like a WealthLens backup file."); return;
+        }
+        const msg = 'Restore this backup? It will REPLACE all current data on this device.\n\n'
+          + `• ${(data.holdings || []).length} holdings\n`
+          + `• ${(data.transactions || []).length} transactions\n`
+          + `• ${(data.goldEntries || []).length} metal entries\n`
+          + `• ${(data.nwHist || []).length} net-worth snapshots`;
+        if (!confirm(msg)) return;
+        S = normalizeState(data);
+        saveS();
+        renderDash(); renderHoldings(); renderCash(); renderGold(); renderNwChart();
+        _aiToast('Backup restored ✓');
+      } catch (err) { alert('Import failed: ' + err.message); }
     }
     function td() { return new Date().toISOString().split('T')[0]; }
     function f(v, d = 2) { if (v == null || isNaN(v)) return '—'; return '$' + (+v).toFixed(d).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
