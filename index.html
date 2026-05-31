@@ -2534,6 +2534,27 @@
       const metalsUSD = (goldSpot ? goldSpot / 31.1035 * gG : 0) + (silverSpot ? silverSpot / 31.1035 * tSg : 0);
       return { nw: Math.round(tMV * USD + metalsUSD * USD + calcCash()), stocksSGD: Math.round(tMV * USD), metalsSGD: Math.round(metalsUSD * USD) };
     }
+
+    // ─── MARKET DATA CACHE ───────────────────────────────────────
+    // Persist the last-known live prices/FX/metals so a fresh page load shows the
+    // correct net worth immediately, instead of a low cost-basis figure while the
+    // (slow) market fetch runs. Updated values replace it seamlessly when they arrive.
+    const MKT_CACHE_KEY = 'wl-market-cache';
+    function saveMarketCache() {
+      try { localStorage.setItem(MKT_CACHE_KEY, JSON.stringify({ LD, USD, goldSpot, goldDayChg, silverSpot, silverDayChg, ts: Date.now() })); } catch {}
+    }
+    function loadMarketCache() {
+      try {
+        const c = JSON.parse(localStorage.getItem(MKT_CACHE_KEY) || 'null');
+        if (!c) return;
+        if (c.LD && typeof c.LD === 'object') LD = c.LD;
+        if (typeof c.USD === 'number' && c.USD > 0) USD = c.USD;
+        if (typeof c.goldSpot === 'number') goldSpot = c.goldSpot;
+        if (typeof c.goldDayChg === 'number') goldDayChg = c.goldDayChg;
+        if (typeof c.silverSpot === 'number') silverSpot = c.silverSpot;
+        if (typeof c.silverDayChg === 'number') silverDayChg = c.silverDayChg;
+      } catch {}
+    }
     function isMarketOpen() {
       const now = new Date();
       const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -2814,8 +2835,11 @@
     async function init() {
       document.getElementById('tx-dt').value = td();
       document.getElementById('gd-dt').value = td();
+      // Restore last-known prices first so the opening screen shows the correct net worth instantly
+      loadMarketCache();
       renderNwChart(); renderHoldings(); renderCash(); renderGold();
       await fetchMeta(); await fetchAllQ();
+      saveMarketCache();
       renderDash(); renderHoldings();
       // Fetch fundamentals for all holdings, then re-render the table once (avoids O(N²) chart churn)
       Promise.allSettled(S.holdings.map(h => fetchFund(h.ticker))).then(() => renderHoldings());
@@ -3908,6 +3932,7 @@
       if (idxQ['USDSGD=X']?.price) USD = idxQ['USDSGD=X'].price;
       if (idxQ['GC=F']?.price) { goldSpot = idxQ['GC=F'].price; goldDayChg = idxQ['GC=F'].price - idxQ['GC=F'].prev; }
       if (idxQ['SI=F']?.price) { silverSpot = idxQ['SI=F'].price; silverDayChg = idxQ['SI=F'].price - idxQ['SI=F'].prev; }
+      saveMarketCache();
       // Re-render price-sensitive views
       renderHoldings(); renderKpi(); renderMovers();
       const timeStr = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' });
