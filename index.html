@@ -869,6 +869,11 @@
       opacity: .7;
     }
 
+    /* Touch devices: make delete buttons always visible with a finger-sized tap area */
+    @media (hover: none) {
+      .del-btn { opacity: .6 !important; padding: 10px 16px !important; font-size: 15px !important; }
+    }
+
     .spark-cell {
       width: 90px;
     }
@@ -3523,7 +3528,7 @@
       document.getElementById('tx-amt').value = ''; document.getElementById('tx-desc').value = '';
       renderCash();
     }
-    function delTx(id) { S.transactions = S.transactions.filter(t => t.id !== id); saveS(); renderCash(); }
+    function delTx(id) { S.transactions = S.transactions.filter(t => String(t.id) !== String(id)); saveS(); renderCash(); }
 
     // Money Manager Excel/CSV import
     const MM_CAT_MAP = {
@@ -3751,7 +3756,7 @@
     <div><div>${esc(t.desc)}</div><div style="font-size:9px;color:var(--mu);margin-top:2px;">${t.date} · <span class="badge ${t.type === 'income' ? 'be' : 'bi'}">${t.type}</span> · ${esc(t.cat)}</div></div>
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="font-weight:700;color:${t.type === 'income' ? 'var(--gr)' : 'var(--rd)'};">${t.type === 'income' ? '+' : '−'}SGD ${t.amt.toFixed(2)}</div>
-      <button class="del-btn" style="opacity:.7;" onclick="delTx(${t.id})">✕</button>
+      <button class="del-btn" style="opacity:.7;" onclick="delTx('${t.id}')">✕</button>
     </div>
   </div>`).join('');
     }
@@ -3773,7 +3778,7 @@
       ['gd-ms', 'gd-pd', 'gd-nt'].forEach(id => document.getElementById(id).value = '');
       renderGold(); renderDash();
     }
-    function delGold(id) { S.goldEntries = S.goldEntries.filter(g => g.id !== id); saveS(); renderGold(); renderDash(); }
+    function delGold(id) { S.goldEntries = S.goldEntries.filter(g => String(g.id) !== String(id)); saveS(); renderGold(); renderDash(); }
 
     function renderGold() {
       // Spot prices strip
@@ -3816,7 +3821,7 @@
         <div style="font-size:10px;color:var(--mu);">Paid: ${g.paid ? 'SGD ' + g.paid : 'Gift'}</div>
         ${glG !== null ? `<div style="font-size:10px;color:${glG >= 0 ? 'var(--gr)' : 'var(--rd)'};">${glG >= 0 ? '+' : ''}SGD ${Math.round(glG).toLocaleString()}</div>` : ''}
       </div>
-      <button class="del-btn" style="opacity:.7;" onclick="delGold(${g.id})">✕</button>
+      <button class="del-btn" style="opacity:.7;" onclick="delGold('${g.id}')">✕</button>
     </div>`;
       }).join('') : '<div style="color:var(--mu);font-size:11px;padding:.5rem;">No entries yet. Add below.</div>';
 
