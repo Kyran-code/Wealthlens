@@ -1,4 +1,4 @@
-const CACHE = 'wealthlens-v32';
+const CACHE = 'wealthlens-v33';
 const SHELL = ['./index.html', './manifest.json', './icon-192.svg', './icon-512.svg'];
 
 self.addEventListener('install', e => {
